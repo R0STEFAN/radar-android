@@ -41,9 +41,14 @@ data class AppSettings(
     var criticalEnabled: Boolean = true,
     var criticalRadiusKm: Double = 40.0,
     var criticalSoundUri: String = "",
+    var criticalVolume: Int = 80,
     var sectorEnabled: Boolean = true,
     var sectorRadiusKm: Double = 100.0,
     var sectorSoundUri: String = "",
+    var sectorVolume: Int = 60,
+    var enableFluger: Boolean = true,
+    var enableUaAlarm: Boolean = true,
+    var hideScoutDrones: Boolean = false,
     var serviceEnabled: Boolean = true
 )
 

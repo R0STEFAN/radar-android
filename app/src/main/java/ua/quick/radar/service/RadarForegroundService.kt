@@ -119,7 +119,7 @@ class RadarForegroundService : Service() {
         }
     }
 
-    private fun loadSettings(): AppSettings {
+    fun loadSettings(): AppSettings {
         return AppSettings(
             pinnedLat = prefs.getFloat("pinned_lat", 50.4501f).toDouble(),
             pinnedLng = prefs.getFloat("pinned_lng", 30.5234f).toDouble(),
@@ -127,9 +127,14 @@ class RadarForegroundService : Service() {
             criticalEnabled = prefs.getBoolean("critical_enabled", true),
             criticalRadiusKm = prefs.getFloat("critical_radius_km", 40.0f).toDouble(),
             criticalSoundUri = prefs.getString("critical_sound_uri", "") ?: "",
+            criticalVolume = prefs.getInt("critical_volume", 80),
             sectorEnabled = prefs.getBoolean("sector_enabled", true),
             sectorRadiusKm = prefs.getFloat("sector_radius_km", 100.0f).toDouble(),
             sectorSoundUri = prefs.getString("sector_sound_uri", "") ?: "",
+            sectorVolume = prefs.getInt("sector_volume", 60),
+            enableFluger = prefs.getBoolean("enable_fluger", true),
+            enableUaAlarm = prefs.getBoolean("enable_ua_alarm", true),
+            hideScoutDrones = prefs.getBoolean("hide_scout_drones", false),
             serviceEnabled = prefs.getBoolean("service_enabled", true)
         )
     }
@@ -241,19 +246,30 @@ class RadarForegroundService : Service() {
                         continue
                     }
 
-                    // Direct fetching from both sensors (No proxy needed, directly in Ukraine)
+                    // Direct fetching according to active sensors
                     val flugerTargetsDef = async {
-                        radarClient.fetchFlugerTriangulatedTargets(settings.pinnedLat, settings.pinnedLng)
+                        if (settings.enableFluger) {
+                            radarClient.fetchFlugerTriangulatedTargets(settings.pinnedLat, settings.pinnedLng)
+                        } else emptyList()
                     }
                     val uaTargetsDef = async {
-                        uaAlarmClient.fetchUaRadarTargets()
+                        if (settings.enableUaAlarm) {
+                            uaAlarmClient.fetchUaRadarTargets()
+                        } else emptyList()
                     }
 
                     val flugerTargets = flugerTargetsDef.await()
                     val uaTargets = uaTargetsDef.await()
 
                     // Cross-sensor fusion
-                    val fusedTargets = fuseTargets(flugerTargets, uaTargets)
+                    var fusedTargets = fuseTargets(flugerTargets, uaTargets)
+
+                    // Optional Scout UAV filtering
+                    if (settings.hideScoutDrones) {
+                        fusedTargets = fusedTargets.filterNot {
+                            it.iconName == "ic_drone" || it.tag == "UAV" || (it.avgSpeedKmh != null && it.avgSpeedKmh < 135.0)
+                        }
+                    }
 
                     // Kinematics and threat assessment
                     val assessment = ThreatAnalyzer.assessThreats(fusedTargets, settings)
@@ -353,7 +369,7 @@ class RadarForegroundService : Service() {
             if (newTrackFound || cooldownPassed) {
                 lastCriticalAlertTime = now
                 critTargets.forEach { notifiedCriticalTrackIds.add(it.trackId) }
-                fireCriticalNotification(critTargets)
+                fireCriticalNotification(critTargets, settings)
             }
         } else if (!assessment.isCritical) {
             notificationManager.cancel(NOTIF_CRITICAL_ID)
@@ -369,7 +385,7 @@ class RadarForegroundService : Service() {
             if (newTrackFound || cooldownPassed) {
                 lastSectorAlertTime = now
                 sectTargets.forEach { notifiedSectorTrackIds.add(it.trackId) }
-                fireSectorNotification(sectTargets)
+                fireSectorNotification(sectTargets, settings)
             }
         } else if (!assessment.isSector) {
             notificationManager.cancel(NOTIF_SECTOR_ID)
@@ -377,7 +393,7 @@ class RadarForegroundService : Service() {
         }
     }
 
-    private fun fireCriticalNotification(targets: List<RadarTarget>) {
+    private fun fireCriticalNotification(targets: List<RadarTarget>, settings: AppSettings) {
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -395,7 +411,7 @@ class RadarForegroundService : Service() {
         val body = "$targetName летить прямо у ваш сектор: $distText$etaText. Прямуйте в укриття!"
 
         val sirenUri = getSirenUri()
-        playActiveSound(sirenUri)
+        playActiveSound(sirenUri, settings.criticalVolume)
 
         val notif = NotificationCompat.Builder(this, CHANNEL_CRITICAL_ID)
             .setContentTitle(title)
@@ -415,7 +431,7 @@ class RadarForegroundService : Service() {
         notificationManager.notify(NOTIF_CRITICAL_ID, notif)
     }
 
-    private fun fireSectorNotification(targets: List<RadarTarget>) {
+    private fun fireSectorNotification(targets: List<RadarTarget>, settings: AppSettings) {
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -430,7 +446,7 @@ class RadarForegroundService : Service() {
         val body = "Найближча ціль: ${closest?.category ?: "Ціль"} за ${closest?.distanceKm?.toInt() ?: 0} км"
 
         val beepUri = getBeepUri()
-        playActiveSound(beepUri)
+        playActiveSound(beepUri, settings.sectorVolume)
 
         val notif = NotificationCompat.Builder(this, CHANNEL_SECTOR_ID)
             .setContentTitle(title)
@@ -449,7 +465,9 @@ class RadarForegroundService : Service() {
         notificationManager.notify(NOTIF_SECTOR_ID, notif)
     }
 
-    private fun playActiveSound(soundUri: Uri) {
+    private fun playActiveSound(soundUri: Uri, volumePercent: Int) {
+        val vol = (volumePercent.coerceIn(0, 100) / 100.0f)
+        if (vol <= 0.01f) return
         try {
             stopAudioPlayback()
             activeMediaPlayer = MediaPlayer().apply {
@@ -460,6 +478,7 @@ class RadarForegroundService : Service() {
                         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build()
                 )
+                setVolume(vol, vol)
                 setOnCompletionListener {
                     it.release()
                     if (activeMediaPlayer == it) activeMediaPlayer = null

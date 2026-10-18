@@ -1,7 +1,6 @@
 package ua.quick.radar.bridge
 
 import android.content.Context
-import android.content.Intent
 import android.media.MediaPlayer
 import android.net.Uri
 import android.webkit.JavascriptInterface
@@ -27,9 +26,14 @@ class WebAppInterface(private val activity: MainActivity) {
             criticalEnabled = prefs.getBoolean("critical_enabled", true),
             criticalRadiusKm = prefs.getFloat("critical_radius_km", 40.0f).toDouble(),
             criticalSoundUri = prefs.getString("critical_sound_uri", "") ?: "",
+            criticalVolume = prefs.getInt("critical_volume", 80),
             sectorEnabled = prefs.getBoolean("sector_enabled", true),
             sectorRadiusKm = prefs.getFloat("sector_radius_km", 100.0f).toDouble(),
             sectorSoundUri = prefs.getString("sector_sound_uri", "") ?: "",
+            sectorVolume = prefs.getInt("sector_volume", 60),
+            enableFluger = prefs.getBoolean("enable_fluger", true),
+            enableUaAlarm = prefs.getBoolean("enable_ua_alarm", true),
+            hideScoutDrones = prefs.getBoolean("hide_scout_drones", false),
             serviceEnabled = prefs.getBoolean("service_enabled", true)
         )
         return gson.toJson(settings)
@@ -46,9 +50,14 @@ class WebAppInterface(private val activity: MainActivity) {
                 .putBoolean("critical_enabled", settings.criticalEnabled)
                 .putFloat("critical_radius_km", settings.criticalRadiusKm.toFloat())
                 .putString("critical_sound_uri", settings.criticalSoundUri)
+                .putInt("critical_volume", settings.criticalVolume)
                 .putBoolean("sector_enabled", settings.sectorEnabled)
                 .putFloat("sector_radius_km", settings.sectorRadiusKm.toFloat())
                 .putString("sector_sound_uri", settings.sectorSoundUri)
+                .putInt("sector_volume", settings.sectorVolume)
+                .putBoolean("enable_fluger", settings.enableFluger)
+                .putBoolean("enable_ua_alarm", settings.enableUaAlarm)
+                .putBoolean("hide_scout_drones", settings.hideScoutDrones)
                 .putBoolean("service_enabled", settings.serviceEnabled)
                 .apply()
 
@@ -115,7 +124,7 @@ class WebAppInterface(private val activity: MainActivity) {
     }
 
     @JavascriptInterface
-    fun testSound(channelType: String) {
+    fun testSound(channelType: String, volumePercent: Int) {
         try {
             val custom = if (channelType == "critical") {
                 prefs.getString("critical_sound_uri", "") ?: ""
@@ -130,7 +139,13 @@ class WebAppInterface(private val activity: MainActivity) {
                 Uri.parse("android.resource://${activity.packageName}/$resId")
             }
 
+            val volInt = if (volumePercent in 0..100) volumePercent else {
+                if (channelType == "critical") prefs.getInt("critical_volume", 80) else prefs.getInt("sector_volume", 60)
+            }
+            val vol = (volInt.coerceIn(0, 100) / 100.0f)
+
             val mp = MediaPlayer.create(activity, uri)
+            mp.setVolume(vol, vol)
             mp.setOnCompletionListener { it.release() }
             mp.start()
         } catch (e: Exception) {

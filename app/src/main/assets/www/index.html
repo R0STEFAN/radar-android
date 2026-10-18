@@ -8,14 +8,14 @@
   <style>
     :root {
       --bg-dark: #0b0f19;
-      --card-bg: rgba(18, 24, 38, 0.94);
+      --card-bg: rgba(18, 24, 38, 0.95);
       --card-border: rgba(255, 255, 255, 0.08);
       --red-alert: #ef4444;
       --red-glow: rgba(239, 68, 68, 0.35);
       --yellow-alert: #f59e0b;
       --yellow-glow: rgba(245, 158, 11, 0.35);
       --green-safe: #10b981;
-      --blue-accent: #3b82f6;
+      --blue-accent: #38bdf8;
       --text-main: #f8fafc;
       --text-muted: #94a3b8;
     }
@@ -50,13 +50,13 @@
     /* Top HUD */
     .top-hud {
       position: absolute;
-      top: 12px;
-      left: 12px;
-      right: 12px;
+      top: 10px;
+      left: 10px;
+      right: 10px;
       z-index: 1000;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
       pointer-events: none;
     }
 
@@ -67,7 +67,7 @@
       -webkit-backdrop-filter: blur(12px);
       border: 1px solid var(--card-border);
       border-radius: 12px;
-      padding: 10px 14px;
+      padding: 9px 12px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -77,14 +77,14 @@
 
     .hud-banner.critical {
       border-color: var(--red-alert);
-      background: rgba(45, 14, 18, 0.95);
+      background: rgba(45, 14, 18, 0.96);
       box-shadow: 0 0 25px var(--red-glow);
       animation: pulse-border 1.5s infinite alternate;
     }
 
     .hud-banner.sector {
       border-color: var(--yellow-alert);
-      background: rgba(45, 34, 12, 0.95);
+      background: rgba(45, 34, 12, 0.96);
       box-shadow: 0 0 20px var(--yellow-glow);
     }
 
@@ -95,12 +95,13 @@
     }
 
     .status-beacon {
-      width: 14px;
-      height: 14px;
+      width: 13px;
+      height: 13px;
       border-radius: 50%;
       background: var(--green-safe);
       box-shadow: 0 0 10px var(--green-safe);
       position: relative;
+      flex-shrink: 0;
     }
 
     .status-beacon::after {
@@ -130,7 +131,7 @@
 
     .status-title {
       font-size: 13px;
-      font-weight: 700;
+      font-weight: 800;
       letter-spacing: 0.3px;
     }
 
@@ -138,65 +139,106 @@
       font-size: 11px;
       color: var(--text-muted);
       margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 180px;
     }
 
-    .btn-panel-toggle {
-      pointer-events: auto;
-      background: rgba(255, 255, 255, 0.1);
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      color: #fff;
-      border-radius: 8px;
-      padding: 6px 12px;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
+    .hud-right-actions {
       display: flex;
       align-items: center;
       gap: 6px;
     }
 
-    /* Floating quick stats */
-    .quick-counters {
+    .btn-hud {
+      pointer-events: auto;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Timer bar under HUD */
+    .timer-hud-bar {
+      pointer-events: auto;
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 4px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+    }
+
+    .timer-progress-wrap {
+      flex: 1;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 2px;
+      margin: 0 10px;
+      overflow: hidden;
+    }
+
+    .timer-progress-fill {
+      height: 100%;
+      width: 100%;
+      background: var(--blue-accent);
+      transition: width 1s linear;
+    }
+
+    /* Preset city chips bar */
+    .city-presets-bar {
       pointer-events: auto;
       display: flex;
       gap: 6px;
       overflow-x: auto;
       padding-bottom: 2px;
+      scrollbar-width: none;
     }
+    .city-presets-bar::-webkit-scrollbar { display: none; }
 
-    .stat-chip {
-      background: var(--card-bg);
+    .city-chip {
+      background: rgba(18, 24, 38, 0.9);
       border: 1px solid var(--card-border);
-      border-radius: 20px;
+      border-radius: 16px;
       padding: 4px 10px;
       font-size: 11px;
       font-weight: 600;
-      display: flex;
-      align-items: center;
-      gap: 5px;
+      color: #cbd5e1;
+      cursor: pointer;
       white-space: nowrap;
-      backdrop-filter: blur(8px);
+      backdrop-filter: blur(6px);
+      transition: all 0.2s;
     }
-
-    .stat-chip.active {
-      border-color: var(--red-alert);
-      color: #ff8888;
+    .city-chip:hover, .city-chip:active {
+      border-color: var(--blue-accent);
+      color: #fff;
+      background: rgba(56, 189, 248, 0.15);
     }
 
     /* Floating map action buttons */
     .map-controls {
       position: absolute;
       right: 12px;
-      bottom: 90px;
+      bottom: 80px;
       z-index: 999;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 8px;
     }
 
     .map-fab {
-      width: 44px;
-      height: 44px;
+      width: 42px;
+      height: 42px;
       border-radius: 50%;
       background: var(--card-bg);
       border: 1px solid var(--card-border);
@@ -204,16 +246,16 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 18px;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+      font-size: 17px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
       cursor: pointer;
       backdrop-filter: blur(10px);
     }
 
     .map-fab.pinning {
       border-color: var(--blue-accent);
-      background: rgba(59, 130, 246, 0.3);
-      box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+      background: rgba(56, 189, 248, 0.35);
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.6);
     }
 
     /* Bottom Control Sheet */
@@ -224,16 +266,16 @@
       bottom: 0;
       z-index: 1001;
       background: var(--card-bg);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
       border-top: 1px solid var(--card-border);
       border-top-left-radius: 20px;
       border-top-right-radius: 20px;
-      padding: 12px 16px 24px 16px;
-      box-shadow: 0 -8px 30px rgba(0,0,0,0.6);
-      transform: translateY(calc(100% - 64px));
+      padding: 8px 14px 20px 14px;
+      box-shadow: 0 -8px 30px rgba(0,0,0,0.7);
+      transform: translateY(calc(100% - 60px));
       transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-      max-height: 82vh;
+      max-height: 85vh;
       display: flex;
       flex-direction: column;
     }
@@ -243,45 +285,141 @@
     }
 
     .sheet-handle {
-      width: 40px;
+      width: 38px;
       height: 4px;
       border-radius: 2px;
       background: rgba(255, 255, 255, 0.3);
-      margin: 0 auto 10px auto;
+      margin: 0 auto 6px auto;
       cursor: pointer;
     }
 
-    .sheet-header-summary {
+    /* Tabs in Bottom Sheet */
+    .sheet-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 4px;
+      gap: 8px;
+    }
+
+    .sheet-tab-btn {
+      flex: 1;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 8px;
+      cursor: pointer;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      height: 38px;
-      cursor: pointer;
+      justify-content: center;
+      gap: 6px;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
     }
 
-    .sheet-title {
-      font-size: 14px;
-      font-weight: 700;
+    .sheet-tab-btn.active {
+      color: var(--blue-accent);
+      border-bottom-color: var(--blue-accent);
     }
 
     .sheet-scrollable {
       overflow-y: auto;
-      margin-top: 14px;
+      margin-top: 10px;
       display: flex;
       flex-direction: column;
-      gap: 12px;
-      padding-bottom: 20px;
+      gap: 10px;
+      padding-bottom: 16px;
+    }
+
+    /* Targets List Items */
+    .threat-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+
+    .threat-card:hover, .threat-card:active {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: var(--blue-accent);
+    }
+
+    .threat-card.critical-threat {
+      border-color: var(--red-alert);
+      background: rgba(239, 68, 68, 0.12);
+    }
+
+    .threat-card-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .threat-icon-box {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: #070a12;
+      border: 1.5px solid var(--card-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .threat-icon-box img {
+      width: 24px;
+      height: 24px;
+    }
+
+    .threat-title-line {
+      font-size: 13px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .threat-sub-line {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .threat-speed-pill {
+      background: var(--red-alert);
+      color: #fff;
+      padding: 3px 7px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+      text-align: right;
     }
 
     /* Settings Cards */
     .settings-card {
       background: rgba(255, 255, 255, 0.03);
       border: 1px solid var(--card-border);
-      border-radius: 14px;
-      padding: 12px 14px;
+      border-radius: 12px;
+      padding: 10px 12px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 8px;
     }
 
     .card-top {
@@ -304,23 +442,18 @@
     .card-subtitle {
       font-size: 11px;
       color: var(--text-muted);
-      margin-top: 2px;
     }
 
-    /* Modern Switch */
+    /* Switch */
     .switch {
       position: relative;
       display: inline-block;
-      width: 46px;
-      height: 26px;
+      width: 44px;
+      height: 24px;
       flex-shrink: 0;
     }
 
-    .switch input {
-      opacity: 0;
-      width: 0;
-      height: 0;
-    }
+    .switch input { opacity: 0; width: 0; height: 0; }
 
     .slider {
       position: absolute;
@@ -328,14 +461,14 @@
       top: 0; left: 0; right: 0; bottom: 0;
       background-color: rgba(255, 255, 255, 0.2);
       transition: .3s;
-      border-radius: 26px;
+      border-radius: 24px;
     }
 
     .slider:before {
       position: absolute;
       content: "";
-      height: 20px;
-      width: 20px;
+      height: 18px;
+      width: 18px;
       left: 3px;
       bottom: 3px;
       background-color: white;
@@ -343,24 +476,16 @@
       border-radius: 50%;
     }
 
-    input:checked + .slider {
-      background-color: var(--blue-accent);
-    }
-    input:checked + .slider.critical {
-      background-color: var(--red-alert);
-    }
-    input:checked + .slider.sector {
-      background-color: var(--yellow-alert);
-    }
-    input:checked + .slider:before {
-      transform: translateX(20px);
-    }
+    input:checked + .slider { background-color: var(--blue-accent); }
+    input:checked + .slider.critical { background-color: var(--red-alert); }
+    input:checked + .slider.sector { background-color: var(--yellow-alert); }
+    input:checked + .slider:before { transform: translateX(20px); }
 
-    /* Range slider */
+    /* Range sliders */
     .slider-row {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 3px;
     }
 
     .slider-labels {
@@ -369,7 +494,6 @@
       font-size: 11px;
       color: var(--text-muted);
     }
-
     .slider-labels span.val {
       color: var(--text-main);
       font-weight: 700;
@@ -387,8 +511,8 @@
     input[type=range]::-webkit-slider-thumb {
       -webkit-appearance: none;
       appearance: none;
-      width: 16px;
-      height: 16px;
+      width: 15px;
+      height: 15px;
       border-radius: 50%;
       background: #fff;
       cursor: pointer;
@@ -399,7 +523,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      background: rgba(0, 0, 0, 0.2);
+      background: rgba(0, 0, 0, 0.25);
       border-radius: 8px;
       padding: 6px 10px;
       font-size: 11px;
@@ -410,12 +534,12 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      max-width: 170px;
+      max-width: 140px;
     }
 
     .sound-actions {
       display: flex;
-      gap: 6px;
+      gap: 4px;
     }
 
     .btn-mini {
@@ -423,27 +547,26 @@
       border: 1px solid rgba(255, 255, 255, 0.15);
       color: #fff;
       border-radius: 6px;
-      padding: 4px 8px;
-      font-size: 11px;
-      font-weight: 600;
+      padding: 4px 7px;
+      font-size: 10px;
+      font-weight: 700;
       cursor: pointer;
     }
 
-    /* Buttons block */
     .btn-block {
       width: 100%;
-      background: rgba(59, 130, 246, 0.15);
-      border: 1px solid rgba(59, 130, 246, 0.3);
-      color: #93c5fd;
-      border-radius: 10px;
-      padding: 10px 14px;
-      font-size: 12px;
-      font-weight: 600;
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: #7dd3fc;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 11px;
+      font-weight: 700;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 8px;
+      gap: 6px;
     }
 
     /* Pulsing user radar marker */
@@ -452,7 +575,6 @@
       width: 24px;
       height: 24px;
     }
-
     .user-marker-core {
       width: 14px;
       height: 14px;
@@ -460,11 +582,9 @@
       border: 2px solid #ffffff;
       border-radius: 50%;
       position: absolute;
-      top: 5px;
-      left: 5px;
+      top: 5px; left: 5px;
       box-shadow: 0 0 12px #38bdf8;
     }
-
     .user-marker-pulse {
       position: absolute;
       top: 0; left: 0; width: 24px; height: 24px;
@@ -482,22 +602,19 @@
       align-items: center;
       justify-content: center;
     }
-
     .threat-icon-rotator {
       width: 32px;
       height: 32px;
-      transition: transform 0.5s ease;
       display: flex;
       align-items: center;
       justify-content: center;
+      transition: transform 0.5s ease;
     }
-
     .threat-icon-rotator img {
       width: 28px;
       height: 28px;
       filter: drop-shadow(0 2px 5px rgba(0,0,0,0.8));
     }
-
     .threat-tag {
       position: absolute;
       bottom: -6px;
@@ -510,7 +627,6 @@
       padding: 1px 4px;
       white-space: nowrap;
     }
-
     .threat-warning-halo {
       position: absolute;
       top: -2px; left: -2px; width: 48px; height: 48px;
@@ -523,17 +639,14 @@
       0% { transform: scale(1); opacity: 0.8; }
       100% { transform: scale(2.2); opacity: 0; }
     }
-
     @keyframes pulse-ring {
       0% { transform: scale(0.6); opacity: 1; }
       100% { transform: scale(2.2); opacity: 0; }
     }
-
     @keyframes pulse-border {
       0% { box-shadow: 0 0 10px var(--red-glow); }
       100% { box-shadow: 0 0 25px rgba(239, 68, 68, 0.7); }
     }
-
     @keyframes halo-rotate {
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
@@ -552,17 +665,40 @@
           <div id="statusDesc" class="status-desc">Очікування даних з сенсорів</div>
         </div>
       </div>
-      <button class="btn-panel-toggle" onclick="toggleBottomSheet()">
-        <span>⚙️ Налаштування</span>
-      </button>
+      <div class="hud-right-actions">
+        <button class="btn-hud" onclick="switchSheetTab('targets'); toggleBottomSheet(true)">
+          <span>🎯 Цілі (<b id="hudTargetsCount">0</b>)</span>
+        </button>
+        <button class="btn-hud" onclick="switchSheetTab('settings'); toggleBottomSheet(true)">
+          <span>⚙️</span>
+        </button>
+      </div>
     </div>
 
-    <!-- Quick threat count chips -->
-    <div class="quick-counters">
-      <div id="chipShahed" class="stat-chip">🛩️ Шахеди: 0</div>
-      <div id="chipKab" class="stat-chip">💣 КАБи: 0</div>
-      <div id="chipMissile" class="stat-chip">🚀 Ракети: 0</div>
-      <div id="chipDrone" class="stat-chip">🛸 БПЛА: 0</div>
+    <!-- Countdown Timer Bar -->
+    <div class="timer-hud-bar">
+      <span>Оновлення: <b id="countdownTimer">5 с</b></span>
+      <div class="timer-progress-wrap">
+        <div id="timerProgressFill" class="timer-progress-fill"></div>
+      </div>
+      <button class="btn-mini" onclick="triggerManualRefresh()">🔄 Зараз</button>
+    </div>
+
+    <!-- Quick City Jump Chips -->
+    <div class="city-presets-bar">
+      <span class="city-chip" onclick="jumpToCity(50.4501, 30.5234, 'Київ')">📍 Київ</span>
+      <span class="city-chip" onclick="jumpToCity(48.4647, 35.0462, 'Дніпро')">📍 Дніпро</span>
+      <span class="city-chip" onclick="jumpToCity(49.9935, 36.2304, 'Харків')">📍 Харків</span>
+      <span class="city-chip" onclick="jumpToCity(46.4825, 30.7233, 'Одеса')">📍 Одеса</span>
+      <span class="city-chip" onclick="jumpToCity(47.8388, 35.1396, 'Запоріжжя')">📍 Запоріжжя</span>
+      <span class="city-chip" onclick="jumpToCity(49.8397, 24.0297, 'Львів')">📍 Львів</span>
+      <span class="city-chip" onclick="jumpToCity(47.9105, 33.3918, 'Кривий Ріг')">📍 Кривий Ріг</span>
+      <span class="city-chip" onclick="jumpToCity(46.9750, 31.9946, 'Миколаїв')">📍 Миколаїв</span>
+      <span class="city-chip" onclick="jumpToCity(50.9077, 34.7981, 'Суми')">📍 Суми</span>
+      <span class="city-chip" onclick="jumpToCity(51.4982, 31.2893, 'Чернігів')">📍 Чернігів</span>
+      <span class="city-chip" onclick="jumpToCity(49.5883, 34.5514, 'Полтава')">📍 Полтава</span>
+      <span class="city-chip" onclick="jumpToCity(49.2331, 28.4682, 'Вінниця')">📍 Вінниця</span>
+      <span class="city-chip" onclick="jumpToCity(49.4444, 32.0598, 'Черкаси')">📍 Черкаси</span>
     </div>
   </div>
 
@@ -576,15 +712,30 @@
     <button class="map-fab" title="Центрувати на позиції" onclick="centerOnUser()">🎯</button>
   </div>
 
-  <!-- Bottom Drawer Settings Sheet -->
+  <!-- Bottom Drawer Settings & Targets Sheet -->
   <div id="bottomSheet" class="bottom-sheet">
     <div class="sheet-handle" onclick="toggleBottomSheet()"></div>
-    <div class="sheet-header-summary" onclick="toggleBottomSheet()">
-      <div class="sheet-title">🛡️ Параметри захисту та оповіщень</div>
-      <span id="sheetExpandIcon" style="font-size: 14px; color: var(--text-muted)">▲</span>
+    
+    <div class="sheet-tabs">
+      <button id="tabBtnTargets" class="sheet-tab-btn active" onclick="switchSheetTab('targets')">
+        📋 Активні цілі (<span id="tabTargetsCount">0</span>)
+      </button>
+      <button id="tabBtnSettings" class="sheet-tab-btn" onclick="switchSheetTab('settings')">
+        ⚙️ Налаштування та сенсори
+      </button>
     </div>
 
-    <div class="sheet-scrollable">
+    <!-- TAB 1: Targets List View -->
+    <div id="tabContentTargets" class="sheet-scrollable">
+      <div id="threatsListContainer">
+        <div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 20px;">
+          🟢 У секторі спостереження цілей не виявлено
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: Settings View -->
+    <div id="tabContentSettings" class="sheet-scrollable" style="display: none;">
 
       <!-- Pinned Location Card (Anti-EW protection) -->
       <div class="settings-card">
@@ -598,15 +749,52 @@
           </div>
         </div>
         <div style="font-size: 11px; color: var(--text-muted); line-height: 1.4;">
-          Координати фіксуються вручну для захисту від підміни GPS ворожими засобами РЕБ (скид у Ліму або аеропорти).
+          Координати фіксуються вручну. Захист від РЕБ-спуфінгу автоматично блокує координати за межами України (Ліма/аеропорти).
         </div>
-        <div style="display: flex; gap: 8px;">
+        <div style="display: flex; gap: 6px;">
           <button class="btn-block" onclick="togglePinMode()" style="flex: 1;">
             <span>📍 Поставити на карті</span>
           </button>
           <button class="btn-block" onclick="requestGps()" style="flex: 1;">
             <span>🛰️ По GPS (з перевіркою)</span>
           </button>
+        </div>
+      </div>
+
+      <!-- Monitoring Sources Selection -->
+      <div class="settings-card">
+        <div class="card-top">
+          <div class="card-title-group">
+            <span style="font-size: 16px;">📡</span>
+            <div>
+              <div class="card-title">Джерела моніторингу</div>
+              <div class="card-subtitle">Увімкнення та вимкнення сенсорів</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:12px;">🟢 Радар Флюгер (Мульти-вузли)</span>
+          <label class="switch">
+            <input type="checkbox" id="toggleFlugerSource" checked onchange="onSettingsChanged()">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:12px;">🔵 Повітряна тривога (Мінцифра / ПС)</span>
+          <label class="switch">
+            <input type="checkbox" id="toggleUaSource" checked onchange="onSettingsChanged()">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:12px;">🛸 Фільтр: Приховати розвідників (&lt;135 км/год)</span>
+          <label class="switch">
+            <input type="checkbox" id="toggleHideScouts" onchange="onSettingsChanged()">
+            <span class="slider"></span>
+          </label>
         </div>
       </div>
 
@@ -617,7 +805,7 @@
             <span style="font-size: 18px;">🚨</span>
             <div>
               <div class="card-title">Критична тривога (Курс на вас)</div>
-              <div class="card-subtitle">Гучний сигнал при векторі атаки в радіусі загрози</div>
+              <div class="card-subtitle">Вектор загрози спрямований на вашу точку</div>
             </div>
           </div>
           <label class="switch">
@@ -634,10 +822,19 @@
           <input type="range" id="sliderCriticalRadius" min="15" max="45" step="1" value="40" oninput="onCriticalRadiusInput(this.value)" onchange="onSettingsChanged()">
         </div>
 
+        <!-- Volume slider for Critical Alert -->
+        <div class="slider-row">
+          <div class="slider-labels">
+            <span>Гучність сигналу:</span>
+            <span id="labelCriticalVolume" class="val">80%</span>
+          </div>
+          <input type="range" id="sliderCriticalVolume" min="0" max="100" step="5" value="80" oninput="onCriticalVolumeInput(this.value)" onchange="onSettingsChanged()">
+        </div>
+
         <div class="sound-row">
           <div>
-            <div style="font-weight:600">Звуковий сигнал:</div>
-            <div id="labelCriticalSound" class="sound-name">Флюгер Сирена (920 ↔ 640 Hz)</div>
+            <div style="font-weight:600">Звук:</div>
+            <div id="labelCriticalSound" class="sound-name">Флюгер Сирена</div>
           </div>
           <div class="sound-actions">
             <button class="btn-mini" onclick="pickSound('critical')">Змінити</button>
@@ -654,7 +851,7 @@
             <span style="font-size: 18px;">🟡</span>
             <div>
               <div class="card-title">Спостереження сектора</div>
-              <div class="card-subtitle">Оповіщення про появу цілей у ширшій зоні огляду</div>
+              <div class="card-subtitle">Повідомлення про цілі у ширшій зоні</div>
             </div>
           </div>
           <label class="switch">
@@ -665,16 +862,25 @@
 
         <div class="slider-row">
           <div class="slider-labels">
-            <span>Радіус сектора огляду:</span>
+            <span>Радіус сектора:</span>
             <span id="labelSectorRadius" class="val">100 км</span>
           </div>
           <input type="range" id="sliderSectorRadius" min="45" max="140" step="5" value="100" oninput="onSectorRadiusInput(this.value)" onchange="onSettingsChanged()">
         </div>
 
+        <!-- Volume slider for Sector Alert -->
+        <div class="slider-row">
+          <div class="slider-labels">
+            <span>Гучність сигналу:</span>
+            <span id="labelSectorVolume" class="val">60%</span>
+          </div>
+          <input type="range" id="sliderSectorVolume" min="0" max="100" step="5" value="60" oninput="onSectorVolumeInput(this.value)" onchange="onSettingsChanged()">
+        </div>
+
         <div class="sound-row">
           <div>
-            <div style="font-weight:600">Звуковий сигнал:</div>
-            <div id="labelSectorSound" class="sound-name">Тактичний Сонар (880 Hz)</div>
+            <div style="font-weight:600">Звук:</div>
+            <div id="labelSectorSound" class="sound-name">Тактичний Сонар</div>
           </div>
           <div class="sound-actions">
             <button class="btn-mini" onclick="pickSound('sector')">Змінити</button>
@@ -684,14 +890,14 @@
         </div>
       </div>
 
-      <!-- Background Service & Battery Optimization -->
+      <!-- 24/7 Background Service -->
       <div class="settings-card">
         <div class="card-top">
           <div class="card-title-group">
             <span style="font-size: 16px;">🔋</span>
             <div>
               <div class="card-title">Автономний моніторинг 24/7</div>
-              <div class="card-subtitle">Робота сервісу при заблокованому екрані</div>
+              <div class="card-subtitle">Робота служби при вимкненому екрані</div>
             </div>
           </div>
           <label class="switch">
@@ -701,7 +907,7 @@
         </div>
 
         <button class="btn-block" onclick="requestBatteryOptimizationExemption()">
-          <span>⚡ Дозволити безперервну роботу у фоні (Вимкнути оптимізацію)</span>
+          <span>⚡ Вимкнути оптимізацію батареї для безперервної роботи</span>
         </button>
       </div>
 
@@ -718,9 +924,14 @@
       criticalEnabled: true,
       criticalRadiusKm: 40,
       criticalSoundUri: "",
+      criticalVolume: 80,
       sectorEnabled: true,
       sectorRadiusKm: 100,
       sectorSoundUri: "",
+      sectorVolume: 60,
+      enableFluger: true,
+      enableUaAlarm: true,
+      hideScoutDrones: false,
       serviceEnabled: true
     };
 
@@ -732,7 +943,11 @@
     let targetPolylines = {};
     let isPinModeActive = false;
 
-    // --- Bridge Helpers ---
+    // Timer countdown
+    let secondsToRefresh = 5;
+    let countdownInterval = null;
+
+    // --- Bridge Call Helper ---
     function callBridge(funcName, ...args) {
       if (window.AndroidBridge && typeof window.AndroidBridge[funcName] === 'function') {
         return window.AndroidBridge[funcName](...args);
@@ -746,6 +961,7 @@
       initMap();
       renderUserPosition();
       updateRadarData();
+      startTimerCountdown();
     });
 
     function loadSettingsFromNative() {
@@ -754,7 +970,7 @@
         try {
           appSettings = JSON.parse(json);
         } catch (e) {
-          console.error("Failed to parse native settings", e);
+          console.error("Failed to parse settings", e);
         }
       }
       applySettingsToUI();
@@ -764,10 +980,18 @@
       document.getElementById("toggleCritical").checked = appSettings.criticalEnabled;
       document.getElementById("sliderCriticalRadius").value = appSettings.criticalRadiusKm;
       document.getElementById("labelCriticalRadius").textContent = `${appSettings.criticalRadiusKm} км`;
+      document.getElementById("sliderCriticalVolume").value = appSettings.criticalVolume || 80;
+      document.getElementById("labelCriticalVolume").textContent = `${appSettings.criticalVolume || 80}%`;
 
       document.getElementById("toggleSector").checked = appSettings.sectorEnabled;
       document.getElementById("sliderSectorRadius").value = appSettings.sectorRadiusKm;
       document.getElementById("labelSectorRadius").textContent = `${appSettings.sectorRadiusKm} км`;
+      document.getElementById("sliderSectorVolume").value = appSettings.sectorVolume || 60;
+      document.getElementById("labelSectorVolume").textContent = `${appSettings.sectorVolume || 60}%`;
+
+      document.getElementById("toggleFlugerSource").checked = appSettings.enableFluger !== false;
+      document.getElementById("toggleUaSource").checked = appSettings.enableUaAlarm !== false;
+      document.getElementById("toggleHideScouts").checked = appSettings.hideScoutDrones === true;
 
       document.getElementById("toggleService").checked = appSettings.serviceEnabled;
 
@@ -775,50 +999,109 @@
         `${appSettings.pinnedLat.toFixed(4)}, ${appSettings.pinnedLng.toFixed(4)} (${appSettings.pinnedName})`;
 
       document.getElementById("labelCriticalSound").textContent =
-        appSettings.criticalSoundUri ? "Кастомний аудіофайл" : "Флюгер Сирена (920 ↔ 640 Hz)";
+        appSettings.criticalSoundUri ? "Власний аудіофайл" : "Флюгер Сирена";
       document.getElementById("labelSectorSound").textContent =
-        appSettings.sectorSoundUri ? "Кастомний аудіофайл" : "Тактичний Сонар (880 Hz)";
+        appSettings.sectorSoundUri ? "Власний аудіофайл" : "Тактичний Сонар";
     }
 
     function onSettingsChanged() {
       appSettings.criticalEnabled = document.getElementById("toggleCritical").checked;
       appSettings.criticalRadiusKm = parseFloat(document.getElementById("sliderCriticalRadius").value);
+      appSettings.criticalVolume = parseInt(document.getElementById("sliderCriticalVolume").value, 10);
+
       appSettings.sectorEnabled = document.getElementById("toggleSector").checked;
       appSettings.sectorRadiusKm = parseFloat(document.getElementById("sliderSectorRadius").value);
+      appSettings.sectorVolume = parseInt(document.getElementById("sliderSectorVolume").value, 10);
+
+      appSettings.enableFluger = document.getElementById("toggleFlugerSource").checked;
+      appSettings.enableUaAlarm = document.getElementById("toggleUaSource").checked;
+      appSettings.hideScoutDrones = document.getElementById("toggleHideScouts").checked;
+
       appSettings.serviceEnabled = document.getElementById("toggleService").checked;
 
       callBridge("saveSettings", JSON.stringify(appSettings));
       renderUserPosition();
+      updateRadarData();
     }
 
     function onCriticalRadiusInput(val) {
       document.getElementById("labelCriticalRadius").textContent = `${val} км`;
-      if (criticalCircle) {
-        criticalCircle.setRadius(val * 1000);
-      }
+      if (criticalCircle) criticalCircle.setRadius(val * 1000);
+    }
+
+    function onCriticalVolumeInput(val) {
+      document.getElementById("labelCriticalVolume").textContent = `${val}%`;
     }
 
     function onSectorRadiusInput(val) {
       document.getElementById("labelSectorRadius").textContent = `${val} км`;
-      if (sectorCircle) {
-        sectorCircle.setRadius(val * 1000);
-      }
+      if (sectorCircle) sectorCircle.setRadius(val * 1000);
     }
 
-    // --- Leaflet Map Init ---
-    function initMap() {
-      map = L.map("map", {
-        zoomControl: false,
-        attributionControl: false,
-        minZoom: 5,
-        maxZoom: 18
-      }).setView([appSettings.pinnedLat, appSettings.pinnedLng], 8);
+    function onSectorVolumeInput(val) {
+      document.getElementById("labelSectorVolume").textContent = `${val}%`;
+    }
 
-      // Dark tactical CartoDB tile layer
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-        subdomains: "abcd",
+    // --- Countdown Timer ---
+    function startTimerCountdown() {
+      if (countdownInterval) clearInterval(countdownInterval);
+      secondsToRefresh = 5;
+
+      countdownInterval = setInterval(() => {
+        secondsToRefresh--;
+        if (secondsToRefresh <= 0) {
+          secondsToRefresh = 5;
+          updateRadarData();
+        }
+        document.getElementById("countdownTimer").textContent = `${secondsToRefresh} с`;
+        const pct = (secondsToRefresh / 5.0) * 100;
+        document.getElementById("timerProgressFill").style.width = `${pct}%`;
+      }, 1000);
+    }
+
+    function triggerManualRefresh() {
+      secondsToRefresh = 5;
+      document.getElementById("countdownTimer").textContent = `5 с`;
+      document.getElementById("timerProgressFill").style.width = `100%`;
+      updateRadarData();
+      callBridge("showToast", "Оновлення даних...");
+    }
+
+    // --- Leaflet Map Init (NO API KEY REQUIRED!) ---
+    function initMap() {
+      // 1. Dark Gray Canvas (ArcGIS Online - Free, Fast, No API Key needed!)
+      const darkBase = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
+        maxZoom: 16
+      });
+      const darkReference = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}", {
+        maxZoom: 16
+      });
+      const darkLayerGroup = L.layerGroup([darkBase, darkReference]);
+
+      // 2. OpenStreetMap Standard (Free, No Key)
+      const osmLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19
-      }).addTo(map);
+      });
+
+      // 3. Satellite Imagery (ArcGIS - Free, No Key)
+      const satelliteLayer = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+        maxZoom: 19
+      });
+
+      map = L.map("map", {
+        center: [appSettings.pinnedLat, appSettings.pinnedLng],
+        zoom: 9,
+        layers: [darkLayerGroup],
+        zoomControl: false,
+        attributionControl: false
+      });
+
+      // Layer switcher in top-right
+      L.control.layers({
+        "🌑 Темна карта": darkLayerGroup,
+        "🗺️ OpenStreetMap": osmLayer,
+        "🛰️ Супутник": satelliteLayer
+      }, null, { position: "topright" }).addTo(map);
 
       map.on("click", (e) => {
         if (isPinModeActive) {
@@ -833,7 +1116,6 @@
       const lat = appSettings.pinnedLat;
       const lng = appSettings.pinnedLng;
 
-      // Pinned user pulse marker
       const userIcon = L.divIcon({
         className: "user-marker-container",
         html: `
@@ -859,7 +1141,7 @@
         });
       }
 
-      // 1. Critical Alert Zone Ring (Red dashed)
+      // Critical ring
       const critRadiusMeters = appSettings.criticalRadiusKm * 1000;
       if (criticalCircle) {
         criticalCircle.setLatLng([lat, lng]);
@@ -876,7 +1158,7 @@
         }).addTo(map);
       }
 
-      // 2. Sector Awareness Zone Ring (Yellow dashed)
+      // Sector ring
       const sectRadiusMeters = appSettings.sectorRadiusKm * 1000;
       if (sectorCircle) {
         sectorCircle.setLatLng([lat, lng]);
@@ -904,6 +1186,13 @@
         renderUserPosition();
         updateRadarData();
       }
+    }
+
+    function jumpToCity(lat, lng, name) {
+      if (map) {
+        map.flyTo([lat, lng], 10, { duration: 0.8 });
+      }
+      setNewPinnedLocation(lat, lng, name);
     }
 
     function togglePinMode(forceState) {
@@ -942,35 +1231,39 @@
     }
 
     function testSound(type) {
-      callBridge("testSound", type);
+      const vol = type === 'critical' ? (appSettings.criticalVolume || 80) : (appSettings.sectorVolume || 60);
+      callBridge("testSound", type, vol);
     }
 
     function requestBatteryOptimizationExemption() {
       callBridge("requestBatteryOptimizationExemption");
     }
 
-    // --- Real-Time Radar Rendering ---
+    // --- Radar Threats & List Rendering ---
     function updateRadarData() {
       const targetsJson = callBridge("getCurrentTargets");
       const assessJson = callBridge("getAssessment");
 
-      if (!targetsJson) return;
-
       let targets = [];
       let assessment = null;
       try {
-        targets = JSON.parse(targetsJson);
+        if (targetsJson) targets = JSON.parse(targetsJson);
       } catch (e) {
         targets = [];
       }
-
       try {
         if (assessJson) assessment = JSON.parse(assessJson);
       } catch (e) {
         assessment = null;
       }
 
+      // Filter scout drones if enabled
+      if (appSettings.hideScoutDrones) {
+        targets = targets.filter(t => t.iconName !== 'ic_drone' && t.tag !== 'UAV' && !(t.avgSpeedKmh && t.avgSpeedKmh < 135));
+      }
+
       renderThreatsOnMap(targets);
+      renderThreatsList(targets);
       updateTopHud(targets, assessment);
     }
 
@@ -979,7 +1272,6 @@
 
       const currentIds = new Set(targets.map(t => t.trackId));
 
-      // Remove stale markers & tracks
       for (const id in targetMarkers) {
         if (!currentIds.has(id)) {
           map.removeLayer(targetMarkers[id]);
@@ -993,12 +1285,6 @@
         }
       }
 
-      // Counters
-      let shahedCount = 0;
-      let kabCount = 0;
-      let missileCount = 0;
-      let droneCount = 0;
-
       for (const t of targets) {
         const id = t.trackId;
         const lat = t.lat;
@@ -1006,11 +1292,6 @@
         const course = t.courseDeg || 0;
         const isHeading = t.isHeadingToUser;
         const iconName = t.iconName || "ic_air_threat_combined_white";
-
-        if (iconName.includes("shahed")) shahedCount += (t.count || 1);
-        else if (iconName.includes("airbomb")) kabCount += (t.count || 1);
-        else if (iconName.includes("missile") || iconName.includes("ballistic")) missileCount += (t.count || 1);
-        else droneCount += (t.count || 1);
 
         const iconHtml = `
           <div class="threat-leaflet-marker">
@@ -1049,7 +1330,6 @@
           targetMarkers[id] = marker;
         }
 
-        // Draw track trail
         if (t.path && t.path.length >= 2) {
           const pathPoints = t.path.map(p => [p[0], p[1]]);
           if (targetPolylines[id]) {
@@ -1065,16 +1345,76 @@
           }
         }
       }
+    }
 
-      // Update counters
-      document.getElementById("chipShahed").textContent = `🛩️ Шахеди: ${shahedCount}`;
-      document.getElementById("chipKab").textContent = `💣 КАБи: ${kabCount}`;
-      document.getElementById("chipMissile").textContent = `🚀 Ракети: ${missileCount}`;
-      document.getElementById("chipDrone").textContent = `🛸 БПЛА: ${droneCount}`;
+    function renderThreatsList(targets) {
+      const container = document.getElementById("threatsListContainer");
+      document.getElementById("tabTargetsCount").textContent = targets.length;
+      document.getElementById("hudTargetsCount").textContent = targets.length;
 
-      document.getElementById("chipShahed").classList.toggle("active", shahedCount > 0);
-      document.getElementById("chipKab").classList.toggle("active", kabCount > 0);
-      document.getElementById("chipMissile").classList.toggle("active", missileCount > 0);
+      if (!targets || targets.length === 0) {
+        container.innerHTML = `
+          <div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 25px;">
+            🟢 У секторі спостереження активних цілей не виявлено
+          </div>
+        `;
+        return;
+      }
+
+      // Sort: closest & heading to user first
+      const sorted = [...targets].sort((a, b) => {
+        if (a.isHeadingToUser && !b.isHeadingToUser) return -1;
+        if (!a.isHeadingToUser && b.isHeadingToUser) return 1;
+        return (a.distanceKm || 999) - (b.distanceKm || 999);
+      });
+
+      let html = "";
+      for (const t of sorted) {
+        const iconName = t.iconName || "ic_air_threat_combined_white";
+        const spd = t.avgSpeedKmh || t.instantSpeedKmh;
+        const spdText = spd ? `${Math.round(spd)} км/год` : "швидкість...";
+        const distText = t.distanceKm ? `${t.distanceKm.toFixed(1)} км` : "-- км";
+        const courseText = t.courseDeg !== null ? `${t.courseDeg}° ${t.courseName || ''}` : "курс...";
+        const etaText = t.timeToUserMin ? ` • ETA: ~${Math.round(t.timeToUserMin)} хв` : "";
+
+        html += `
+          <div class="threat-card ${t.isHeadingToUser ? 'critical-threat' : ''}" onclick="focusTargetOnMap(${t.lat}, ${t.lng}, '${t.trackId}')">
+            <div class="threat-card-left">
+              <div class="threat-icon-box">
+                <img src="icons/${iconName}.svg" alt="icon" />
+              </div>
+              <div style="min-width: 0;">
+                <div class="threat-title-line">
+                  <span>${t.category}</span>
+                  ${t.isHeadingToUser ? '<span style="color:#ef4444; font-size:10px; font-weight:800;">🚨 НА ВАС!</span>' : ''}
+                </div>
+                <div class="threat-sub-line">
+                  <span>Відстань: <b>${distText}</b></span> • <span>${courseText}</span>${etaText}
+                </div>
+                <div style="font-size: 10px; color: #64748b; margin-top: 2px;">
+                  ${t.sourceLabel || 'Радар'}
+                </div>
+              </div>
+            </div>
+            <div class="threat-speed-pill" style="${t.isHeadingToUser ? 'background:#ef4444;' : 'background:#334155;'}">
+              ${spdText}
+            </div>
+          </div>
+        `;
+      }
+      container.innerHTML = html;
+    }
+
+    function focusTargetOnMap(lat, lng, trackId) {
+      toggleBottomSheet(false);
+      if (map) {
+        map.flyTo([lat, lng], 11, { duration: 0.6 });
+        setTimeout(() => {
+          if (targetMarkers[trackId]) {
+            targetMarkers[trackId].openPopup();
+          }
+        }, 650);
+      }
     }
 
     function updateTopHud(targets, assessment) {
@@ -1098,11 +1438,21 @@
       }
     }
 
-    function toggleBottomSheet() {
+    function toggleBottomSheet(forceExpand) {
       const sheet = document.getElementById("bottomSheet");
-      const icon = document.getElementById("sheetExpandIcon");
-      sheet.classList.toggle("expanded");
-      icon.textContent = sheet.classList.contains("expanded") ? "▼" : "▲";
+      if (forceExpand !== undefined) {
+        sheet.classList.toggle("expanded", forceExpand);
+      } else {
+        sheet.classList.toggle("expanded");
+      }
+    }
+
+    function switchSheetTab(tab) {
+      const isTargets = tab === 'targets';
+      document.getElementById("tabBtnTargets").classList.toggle("active", isTargets);
+      document.getElementById("tabBtnSettings").classList.toggle("active", !isTargets);
+      document.getElementById("tabContentTargets").style.display = isTargets ? "flex" : "none";
+      document.getElementById("tabContentSettings").style.display = !isTargets ? "flex" : "none";
     }
 
     // --- Native Callbacks ---
