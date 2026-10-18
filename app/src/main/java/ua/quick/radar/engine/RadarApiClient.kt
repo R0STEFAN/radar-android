@@ -496,7 +496,11 @@ class RadarApiClient {
                 continue
             }
             // 2. Strict flight threshold: >= 2 samples, speed >= 45.0 km/h, net displacement >= 0.25 km, course != null
+            val netDist = tr?.history?.let { h ->
+                if (h.size >= 2) ThreatAnalyzer.haversineKm(h.first().first, h.first().second, h.last().first, h.last().second) else 0.0
+            } ?: (if (target.path.size >= 2) ThreatAnalyzer.haversineKm(target.path.first()[0], target.path.first()[1], target.path.last()[0], target.path.last()[1]) else 0.0)
             val spd = target.avgSpeedKmh ?: target.instantSpeedKmh ?: 0.0
+            val course = target.courseDeg ?: tr?.course
             if (histSize < 2 || spd < 45.0 || netDist < 0.25 || course == null) {
                 continue
             }
