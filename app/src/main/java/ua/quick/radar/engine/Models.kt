@@ -23,7 +23,8 @@ data class RadarTarget(
     @SerializedName("sourceLabel") val sourceLabel: String = "Радар",
     @SerializedName("path") val path: List<List<Double>> = emptyList(),
     @SerializedName("count") val count: Int = 1,
-    @SerializedName("isFused") val isFused: Boolean = false
+    @SerializedName("isFused") val isFused: Boolean = false,
+    @SerializedName("isCriticalIncoming") var isCriticalIncoming: Boolean = false
 )
 
 data class ClassificationResult(

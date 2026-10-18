@@ -867,6 +867,18 @@
             <span class="slider"></span>
           </label>
         </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:12px;">⚔️ Окупація / ЛБЗ (DeepState)</span>
+          <label class="switch">
+            <input type="checkbox" id="toggleDeepState" onchange="toggleDeepStateLayer()">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div style="font-size:10px; color:#64748b; margin-top:-2px; margin-bottom:4px; display:flex; justify-content:space-between;">
+          <span>Джерело: DeepStateMap.live</span>
+          <span id="deepstateUpdateLabel" style="color:#94a3b8;">Вимкнено</span>
+        </div>
       </div>
 
       <!-- Critical Channel Card -->
@@ -1019,6 +1031,9 @@
     let targetMarkers = {};
     let targetLayers = {};
     let isPinModeActive = false;
+    let deepstateLayerGroup = null;
+    let deepstateGeoJsonCache = null;
+    let deepstateLoading = false;
 
     // Timer countdown
     let secondsToRefresh = 20;
@@ -1228,11 +1243,34 @@
       });
 
       // Layer switcher in top-right
+      deepstateLayerGroup = L.layerGroup();
+
       L.control.layers({
         "🌑 Темна карта": darkLayerGroup,
         "🗺️ OpenStreetMap": osmLayer,
         "🛰️ Супутник": satelliteLayer
-      }, null, { position: "topright" }).addTo(map);
+      }, {
+        "⚔️ Окупація / ЛБЗ (DeepState)": deepstateLayerGroup
+      }, { position: "topright" }).addTo(map);
+
+      map.on('overlayadd', function(e) {
+        if (e.layer === deepstateLayerGroup) {
+          const chk = document.getElementById("toggleDeepState");
+          if (chk) chk.checked = true;
+          localStorage.setItem('fluger_deepstate_enabled', 'true');
+          loadDeepStateData();
+        }
+      });
+
+      map.on('overlayremove', function(e) {
+        if (e.layer === deepstateLayerGroup) {
+          const chk = document.getElementById("toggleDeepState");
+          if (chk) chk.checked = false;
+          localStorage.setItem('fluger_deepstate_enabled', 'false');
+          const lbl = document.getElementById("deepstateUpdateLabel");
+          if (lbl) lbl.textContent = "Вимкнено";
+        }
+      });
 
       map.on("click", (e) => {
         if (isPinModeActive) {
@@ -1240,6 +1278,137 @@
           togglePinMode(false);
         }
       });
+
+      const savedDeepState = localStorage.getItem('fluger_deepstate_enabled');
+      if (savedDeepState === 'true') {
+        const chk = document.getElementById("toggleDeepState");
+        if (chk) chk.checked = true;
+        toggleDeepStateLayer();
+      }
+    }
+
+    function toggleDeepStateLayer() {
+      const chk = document.getElementById("toggleDeepState");
+      const enabled = chk ? chk.checked : false;
+      localStorage.setItem('fluger_deepstate_enabled', enabled ? 'true' : 'false');
+      if (enabled) {
+        if (!map.hasLayer(deepstateLayerGroup)) {
+          map.addLayer(deepstateLayerGroup);
+        }
+        loadDeepStateData();
+      } else {
+        if (map.hasLayer(deepstateLayerGroup)) {
+          map.removeLayer(deepstateLayerGroup);
+        }
+        const lbl = document.getElementById("deepstateUpdateLabel");
+        if (lbl) lbl.textContent = "Вимкнено";
+      }
+    }
+
+    function loadDeepStateData() {
+      const lbl = document.getElementById("deepstateUpdateLabel");
+      if (deepstateGeoJsonCache) {
+        renderDeepStateGeoJson(deepstateGeoJsonCache);
+        if (lbl && deepstateGeoJsonCache.datetime) lbl.textContent = deepstateGeoJsonCache.datetime;
+        return;
+      }
+      const rawCached = callBridge("getDeepStateData");
+      if (rawCached) {
+        try {
+          const parsed = JSON.parse(rawCached);
+          if (parsed && parsed.status === 'ok' && parsed.geojson) {
+            deepstateGeoJsonCache = parsed;
+            renderDeepStateGeoJson(parsed);
+            if (lbl && parsed.datetime) lbl.textContent = parsed.datetime;
+            return;
+          }
+        } catch (e) {}
+      }
+      if (deepstateLoading) return;
+      deepstateLoading = true;
+      if (lbl) lbl.textContent = "Завантаження...";
+      callBridge("loadDeepStateGeoJson");
+    }
+
+    window.onDeepStateLoaded = function(data) {
+      deepstateLoading = false;
+      if (!data) {
+        const raw = callBridge("getDeepStateData");
+        if (raw) {
+          try { data = JSON.parse(raw); } catch (e) { data = null; }
+        }
+      } else if (typeof data === 'string') {
+        try { data = JSON.parse(data); } catch (e) { data = null; }
+      }
+      if (data && data.status === 'ok' && data.geojson) {
+        deepstateGeoJsonCache = data;
+        renderDeepStateGeoJson(data);
+        const lbl = document.getElementById("deepstateUpdateLabel");
+        if (lbl) lbl.textContent = data.datetime || "Оновлено";
+      } else {
+        const lbl = document.getElementById("deepstateUpdateLabel");
+        if (lbl) lbl.textContent = "Помилка";
+      }
+    };
+
+    window.onDeepStateFailed = function() {
+      deepstateLoading = false;
+      const lbl = document.getElementById("deepstateUpdateLabel");
+      if (lbl) lbl.textContent = "Помилка мережі";
+    };
+
+    function renderDeepStateGeoJson(data) {
+      deepstateLayerGroup.clearLayers();
+      if (!data || !data.geojson) return;
+
+      const geoLayer = L.geoJSON(data.geojson, {
+        interactive: false,
+        style: function(feature) {
+          const p = feature.properties || {};
+          const name = p.name || '';
+          let stroke = '#b91c1c';
+          let fill = '#ef4444';
+          let fillOpacity = 0.28;
+          let strokeWidth = 1.2;
+
+          if (name.includes('Окуповано') || name.includes('Occupied')) {
+            fill = '#dc2626';
+            stroke = '#991b1b';
+            fillOpacity = 0.26;
+            strokeWidth = 1.4;
+          } else if (name.includes('ОРДЛО') || name.includes('Крим') || name.includes('Crimea') || name.includes('ordlo')) {
+            fill = '#7f1d1d';
+            stroke = '#581c87';
+            fillOpacity = 0.24;
+            strokeWidth = 1.2;
+          } else if (name.includes('Статус невідомий') || name.includes('Unknown status')) {
+            fill = '#78716c';
+            stroke = '#44403c';
+            fillOpacity = 0.35;
+            strokeWidth = 1.5;
+          } else if (name.includes('Звільнено') || name.includes('Liberated')) {
+            fill = '#0284c7';
+            stroke = '#0369a1';
+            fillOpacity = 0.22;
+            strokeWidth = 1.2;
+          } else {
+            fill = p.fill || '#b91c1c';
+            stroke = p.stroke || '#b91c1c';
+            fillOpacity = 0.25;
+          }
+
+          return {
+            color: stroke,
+            weight: strokeWidth,
+            opacity: 0.85,
+            fillColor: fill,
+            fillOpacity: fillOpacity,
+            interactive: false
+          };
+        }
+      });
+
+      deepstateLayerGroup.addLayer(geoLayer);
     }
 
     function renderUserPosition() {
@@ -1397,7 +1566,9 @@
       targets = targets.filter(t => {
         if (t.tag === 'STATIONARY' || t.isStagnant === true) return false;
         if (t.category && t.category.includes('Стаціонарний')) return false;
-        if (t.avgSpeedKmh !== null && t.avgSpeedKmh !== undefined && t.avgSpeedKmh < 45 && t.source === 'fluger') return false;
+        const spd = t.avgSpeedKmh || t.instantSpeedKmh || 0;
+        if (spd < 45 || t.courseDeg === null || t.courseDeg === undefined) return false;
+        if (t.sampleCount && t.sampleCount < 2 && t.source === 'fluger') return false;
         if (t.source === 'ukrainealarm' && !appSettings.uaAllUkraine) {
           if (t.distanceKm !== undefined && t.distanceKm !== null && t.distanceKm > appSettings.sectorRadiusKm * 1.15) {
             return false;
@@ -1432,7 +1603,8 @@
         const lng = t.lng;
         const hasCourse = (t.courseDeg !== null && t.courseDeg !== undefined && !t.isStagnant && (t.sampleCount >= 2 || t.source === 'ukrainealarm'));
         const course = hasCourse ? t.courseDeg : 0;
-        const isHeading = t.isHeadingToUser;
+        const inAlertZone = (t.distanceKm !== null && t.distanceKm !== undefined && t.distanceKm <= appSettings.criticalRadiusKm);
+        const isCritical = inAlertZone && (t.isHeadingToUser || t.isCriticalIncoming);
         const isFused = !!t.isFused;
         const iconName = t.iconName || "ic_air_threat_combined_white";
 
@@ -1445,20 +1617,20 @@
         const group = L.layerGroup().addTo(map);
         targetLayers[id] = group;
 
-        // 1. Line from User to Target
-        const lineColor = isHeading ? '#dc2626' : (t.distanceKm <= appSettings.criticalRadiusKm ? '#ef4444' : (t.source === 'ukrainealarm' ? '#38bdf8' : '#f59e0b'));
+        // 1. Line from User to Target (Yellow in sector, Red ONLY if inside alert perimeter AND heading to user)
+        const lineColor = isCritical ? '#dc2626' : (t.source === 'ukrainealarm' ? '#38bdf8' : '#f59e0b');
         const userLine = L.polyline([[userLat, userLng], [lat, lng]], {
           color: lineColor,
-          weight: isHeading ? 2.5 : 1.2,
-          opacity: isHeading ? 0.9 : 0.45,
-          dashArray: isHeading ? '6, 4' : '4, 6',
+          weight: isCritical ? 2.5 : 1.2,
+          opacity: isCritical ? 0.9 : 0.45,
+          dashArray: isCritical ? '6, 4' : '4, 6',
           interactive: false
         });
         group.addLayer(userLine);
 
         // 2. Breadcrumb Historical Flight Path
         if (t.path && t.path.length >= 2) {
-          const trailColor = isHeading ? '#dc2626' : (t.source === 'ukrainealarm' ? '#38bdf8' : '#f97316');
+          const trailColor = isCritical ? '#dc2626' : (t.source === 'ukrainealarm' ? '#38bdf8' : '#f97316');
           const trail = L.polyline(t.path, {
             color: trailColor,
             weight: 3.5,
@@ -1486,8 +1658,8 @@
           const forwardDistMeters = (speed * 1000.0 / 3600.0) * 60.0;
           const fwdPt = getDestinationPoint(lat, lng, forwardDistMeters, t.courseDeg);
           const fwdVector = L.polyline([[lat, lng], fwdPt], {
-            color: isHeading ? '#ef4444' : '#facc15',
-            weight: isHeading ? 3 : 2,
+            color: isCritical ? '#ef4444' : '#facc15',
+            weight: isCritical ? 3 : 2,
             opacity: 0.9,
             dashArray: '3, 4',
             interactive: false
@@ -1496,7 +1668,7 @@
         }
 
         // 4. Tactical Target Marker with SVG icon & heading arrow
-        const markerBorderColor = isHeading ? '#dc2626' : (t.distanceKm <= appSettings.criticalRadiusKm ? '#ef4444' : (isFused ? '#38bdf8' : (t.source === 'ukrainealarm' ? '#38bdf8' : '#f59e0b')));
+        const markerBorderColor = isCritical ? '#dc2626' : (isFused ? '#38bdf8' : (t.source === 'ukrainealarm' ? '#38bdf8' : '#f59e0b'));
         const distText = t.distanceKm ? `${t.distanceKm.toFixed(0)} км` : '';
         const fusedClass = isFused ? 'fused-target' : '';
 
@@ -1504,12 +1676,12 @@
           <div class="custom-target-marker">
             <div class="marker-ping-wave ${fusedClass}" style="${!isFused ? 'border-color:' + markerBorderColor + ';' : ''}"></div>
             <div class="course-pointer-wrap" style="${hasCourse ? `transform: rotate(${course}deg);` : 'display:none;'}">
-              <div class="course-arrow-head" style="border-bottom-color:${isHeading ? '#ef4444' : '#fde047'}; filter: drop-shadow(0 0 5px ${isHeading ? '#ef4444' : '#eab308'});"></div>
+              <div class="course-arrow-head" style="border-bottom-color:${isCritical ? '#ef4444' : '#fde047'}; filter: drop-shadow(0 0 5px ${isCritical ? '#ef4444' : '#eab308'});"></div>
             </div>
             <div class="marker-icon-box ${fusedClass}" style="${!isFused ? 'border-color:' + markerBorderColor + '; box-shadow:0 0 14px ' + markerBorderColor + ';' : ''}">
               <img src="${getIconSrc(iconName)}" style="${hasCourse ? `transform: rotate(${course}deg);` : ''}" alt="${t.category}" />
             </div>
-            ${distText ? `<div class="threat-tag" style="${isHeading ? 'border-color: #ef4444; color: #ff9999;' : ''}">${distText}</div>` : ''}
+            ${distText ? `<div class="threat-tag" style="${isCritical ? 'border-color: #ef4444; color: #ff9999;' : ''}">${distText}</div>` : ''}
           </div>
         `;
 
@@ -1525,7 +1697,7 @@
 
         marker.bindPopup(`
           <div style="font-size: 13px; line-height: 1.5; color: #0f172a; min-width: 230px;">
-            ${isHeading ? `
+            ${isCritical ? `
               <div style="background:#fee2e2; border:1px solid #ef4444; color:#b91c1c; padding:6px 8px; border-radius:6px; font-weight:800; font-size:12px; margin-bottom:8px;">
                 🚨 УВАГА! ЦІЛЬ КУРСОМ НА ВАС!${t.timeToUserMin ? `<br><small style="font-weight:600; color:#991b1b;">Орієнтовний підліт: ~${Math.round(t.timeToUserMin)} хв</small>` : ''}
               </div>` : ''}
@@ -1570,10 +1742,12 @@
         return;
       }
 
-      // Sort: closest & heading to user first
+      // Sort: critical incoming first, then closest
       const sorted = [...targets].sort((a, b) => {
-        if (a.isHeadingToUser && !b.isHeadingToUser) return -1;
-        if (!a.isHeadingToUser && b.isHeadingToUser) return 1;
+        const aCrit = (a.distanceKm <= appSettings.criticalRadiusKm) && (a.isHeadingToUser || a.isCriticalIncoming);
+        const bCrit = (b.distanceKm <= appSettings.criticalRadiusKm) && (b.isHeadingToUser || b.isCriticalIncoming);
+        if (aCrit && !bCrit) return -1;
+        if (!aCrit && bCrit) return 1;
         return (a.distanceKm || 999) - (b.distanceKm || 999);
       });
 
@@ -1585,9 +1759,11 @@
         const distText = t.distanceKm ? `${t.distanceKm.toFixed(1)} км` : "-- км";
         const courseText = t.courseDeg !== null ? `${t.courseDeg}° ${t.courseName || ''}` : "курс...";
         const etaText = t.timeToUserMin ? ` • ETA: ~${Math.round(t.timeToUserMin)} хв` : "";
+        const inAlertZone = (t.distanceKm !== null && t.distanceKm !== undefined && t.distanceKm <= appSettings.criticalRadiusKm);
+        const isCritical = inAlertZone && (t.isHeadingToUser || t.isCriticalIncoming);
 
         html += `
-          <div class="threat-card ${t.isHeadingToUser ? 'critical-threat' : ''}" onclick="focusTargetOnMap(${t.lat}, ${t.lng}, '${t.trackId}')">
+          <div class="threat-card ${isCritical ? 'critical-threat' : ''}" onclick="focusTargetOnMap(${t.lat}, ${t.lng}, '${t.trackId}')">
             <div class="threat-card-left">
               <div class="threat-icon-box">
                 <img src="${getIconSrc(iconName)}" alt="icon" />
@@ -1596,7 +1772,7 @@
                 <div class="threat-title-line">
                   <span>${t.category}</span>
                   ${t.count && t.count > 1 ? `<span style="background:#ef4444; color:#fff; font-size:10px; font-weight:800; padding:1px 4px; border-radius:3px;">×${t.count}</span>` : ''}
-                  ${t.isHeadingToUser ? '<span style="color:#ef4444; font-size:10px; font-weight:800;">🚨 НА ВАС!</span>' : ''}
+                  ${isCritical ? '<span style="color:#ef4444; font-size:10px; font-weight:800;">🚨 НА ВАС!</span>' : ''}
                 </div>
                 <div class="threat-sub-line">
                   <span>Відстань: <b>${distText}</b></span> • <span>${courseText}</span>${etaText}
@@ -1606,7 +1782,7 @@
                 </div>
               </div>
             </div>
-            <div class="threat-speed-pill" style="${t.isHeadingToUser ? 'background:#ef4444;' : 'background:#334155;'}">
+            <div class="threat-speed-pill" style="${isCritical ? 'background:#ef4444;' : 'background:#334155;'}">
               ${spdText}
             </div>
           </div>

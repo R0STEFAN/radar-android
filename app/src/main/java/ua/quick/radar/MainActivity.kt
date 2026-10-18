@@ -32,7 +32,7 @@ import ua.quick.radar.service.RadarForegroundService
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var webView: WebView
+    lateinit var webView: WebView
     private var pendingSoundPickerType: String? = null
 
     private val permissionLauncher = registerForActivityResult(

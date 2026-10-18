@@ -495,9 +495,9 @@ class RadarApiClient {
             if (tr?.isStagnant == true || cls.tag == "STATIONARY") {
                 continue
             }
-            // 2. Strict flight threshold: >= 2 samples, speed >= 45.0 km/h
+            // 2. Strict flight threshold: >= 2 samples, speed >= 45.0 km/h, net displacement >= 0.25 km, course != null
             val spd = target.avgSpeedKmh ?: target.instantSpeedKmh ?: 0.0
-            if (histSize < 2 || spd < 45.0) {
+            if (histSize < 2 || spd < 45.0 || netDist < 0.25 || course == null) {
                 continue
             }
 

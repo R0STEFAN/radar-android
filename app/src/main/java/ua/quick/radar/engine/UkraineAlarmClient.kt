@@ -148,11 +148,12 @@ class UkraineAlarmClient {
             var instantSpeedKmh: Double? = null
             var courseDeg = item.heading
 
+            var totalDist = 0.0
             if (history.size >= 2) {
                 val firstP = history.first()
                 val lastP = history.last()
                 val totalDt = lastP.timeSec - firstP.timeSec
-                val totalDist = ThreatAnalyzer.haversineKm(firstP.lat, firstP.lng, lastP.lat, lastP.lng)
+                totalDist = ThreatAnalyzer.haversineKm(firstP.lat, firstP.lng, lastP.lat, lastP.lng)
 
                 if (totalDt > 2.0 && totalDist >= 0.05) {
                     avgSpeedKmh = ThreatAnalyzer.safeRound((totalDist / totalDt) * 3600.0, 0)
@@ -168,6 +169,17 @@ class UkraineAlarmClient {
                 if (courseDeg == null && distInst >= 0.05) {
                     courseDeg = ThreatAnalyzer.calculateBearing(prevP.lat, prevP.lng, lastP.lat, lastP.lng)
                 }
+            }
+
+            // Strictly suppress stationary targets:
+            // Target remains in trackHistories for 75 seconds, but is NOT added to result until movement is confirmed
+            val isMoving = history.size >= 2 &&
+                    (avgSpeedKmh ?: instantSpeedKmh ?: 0.0) >= 45.0 &&
+                    totalDist >= 0.25 &&
+                    courseDeg != null
+
+            if (!isMoving) {
+                continue
             }
 
             val pathCoords = history.map { listOf(it.lat, it.lng) }

@@ -5,10 +5,14 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.webkit.JavascriptInterface
 import android.widget.Toast
+import androidx.lifecycle.lifecycleScope
 import com.google.gson.Gson
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import ua.quick.radar.MainActivity
 import ua.quick.radar.R
 import ua.quick.radar.engine.AppSettings
+import ua.quick.radar.engine.DeepStateClient
 import ua.quick.radar.engine.ThreatAnalyzer
 import ua.quick.radar.service.RadarForegroundService
 
@@ -16,6 +20,7 @@ class WebAppInterface(private val activity: MainActivity) {
 
     private val gson = Gson()
     private val prefs = activity.getSharedPreferences(RadarForegroundService.PREFS_NAME, Context.MODE_PRIVATE)
+    private val deepStateClient = DeepStateClient()
 
     @JavascriptInterface
     fun getSettings(): String {
@@ -188,6 +193,29 @@ class WebAppInterface(private val activity: MainActivity) {
         RadarForegroundService.resetAllTracks()
         activity.runOnUiThread {
             Toast.makeText(activity, "Історію треків очищено. Сканування...", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    @Volatile
+    private var cachedDeepStateJson: String? = null
+
+    @JavascriptInterface
+    fun getDeepStateData(): String {
+        return cachedDeepStateJson ?: deepStateClient.fetchDeepStateData(activity) ?: ""
+    }
+
+    @JavascriptInterface
+    fun loadDeepStateGeoJson() {
+        activity.lifecycleScope.launch(Dispatchers.IO) {
+            val json = deepStateClient.fetchDeepStateData(activity)
+            cachedDeepStateJson = json
+            activity.runOnUiThread {
+                if (json != null) {
+                    activity.webView.evaluateJavascript("window.onDeepStateLoaded && window.onDeepStateLoaded()", null)
+                } else {
+                    activity.webView.evaluateJavascript("window.onDeepStateFailed && window.onDeepStateFailed()", null)
+                }
+            }
         }
     }
 }

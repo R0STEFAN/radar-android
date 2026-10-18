@@ -291,8 +291,10 @@ object ThreatAnalyzer {
             target.timeToUserMin = etaMin
 
             val isImminentProximity = dist <= 12.0
+            val isCriticalIncoming = (dist <= critRadius) && (isHeadingToUser || isImminentProximity)
+            target.isCriticalIncoming = isCriticalIncoming
 
-            if (settings.criticalEnabled && dist <= critRadius && (isHeadingToUser || isImminentProximity)) {
+            if (settings.criticalEnabled && isCriticalIncoming) {
                 criticalList.add(target)
             } else if (settings.sectorEnabled && dist <= sectRadius) {
                 sectorList.add(target)
