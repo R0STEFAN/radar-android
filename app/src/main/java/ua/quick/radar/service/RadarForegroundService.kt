@@ -44,9 +44,9 @@ class RadarForegroundService : Service() {
 
     companion object {
         const val PREFS_NAME = "fluger_radar_prefs"
-        const val CHANNEL_SERVICE_ID = "channel_service_v3"
-        const val CHANNEL_CRITICAL_ID = "channel_critical_v3"
-        const val CHANNEL_SECTOR_ID = "channel_sector_v3"
+        const val CHANNEL_SERVICE_ID = "channel_service_v4"
+        const val CHANNEL_CRITICAL_ID = "channel_critical_v4"
+        const val CHANNEL_SECTOR_ID = "channel_sector_v4"
 
         const val NOTIF_SERVICE_ID = 1001
         const val NOTIF_CRITICAL_ID = 1002
@@ -178,10 +178,14 @@ class RadarForegroundService : Service() {
 
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val audioAttr = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ALARM)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
+            // Delete legacy channels so sound settings don't linger
+            try {
+                notificationManager.deleteNotificationChannel("channel_critical_v3")
+                notificationManager.deleteNotificationChannel("channel_sector_v3")
+                notificationManager.deleteNotificationChannel("channel_service_v3")
+                notificationManager.deleteNotificationChannel("channel_critical_v2")
+                notificationManager.deleteNotificationChannel("channel_sector_v2")
+            } catch (_: Exception) {}
 
             // 1. Silent Service Channel
             val serviceChannel = NotificationChannel(
@@ -196,7 +200,7 @@ class RadarForegroundService : Service() {
             }
             notificationManager.createNotificationChannel(serviceChannel)
 
-            // 2. Critical Alert Channel (Siren + Strong Vibration)
+            // 2. Critical Alert Channel (Siren + Strong Vibration; audio exclusively via MediaPlayer)
             val critChannel = NotificationChannel(
                 CHANNEL_CRITICAL_ID,
                 getString(R.string.channel_critical_name),
@@ -205,7 +209,7 @@ class RadarForegroundService : Service() {
                 description = getString(R.string.channel_critical_desc)
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 800, 200, 800, 200, 1200)
-                setSound(getSirenUri(), audioAttr)
+                setSound(null, null)
                 enableLights(true)
                 lightColor = Color.RED
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
@@ -213,7 +217,7 @@ class RadarForegroundService : Service() {
             }
             notificationManager.createNotificationChannel(critChannel)
 
-            // 3. Sector Awareness Channel (Sonar Beep + Short Vibration)
+            // 3. Sector Awareness Channel (Sonar Beep + Short Vibration; audio exclusively via MediaPlayer)
             val sectChannel = NotificationChannel(
                 CHANNEL_SECTOR_ID,
                 getString(R.string.channel_sector_name),
@@ -222,7 +226,7 @@ class RadarForegroundService : Service() {
                 description = getString(R.string.channel_sector_desc)
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 250, 150, 250)
-                setSound(getBeepUri(), audioAttr)
+                setSound(null, null)
                 enableLights(true)
                 lightColor = Color.YELLOW
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
@@ -284,16 +288,11 @@ class RadarForegroundService : Service() {
                     // Cross-sensor fusion
                     var fusedTargets = fuseTargets(flugerTargets, uaTargets, settings)
 
-                    // Optional Scout UAV filtering
+                    // Optional Scout UAV filtering (only for identified moving drones, keeping unknown state targets visible)
                     if (settings.hideScoutDrones) {
                         fusedTargets = fusedTargets.filterNot {
-                            it.iconName == "ic_drone" || it.tag == "UAV" || (it.avgSpeedKmh != null && it.avgSpeedKmh < 135.0)
+                            !it.isUnknownState && !it.isStagnant && (it.iconName == "ic_drone" || it.tag == "UAV" || (it.avgSpeedKmh != null && it.avgSpeedKmh < 135.0))
                         }
-                    }
-
-                    // Strict stationary / clutter suppression
-                    fusedTargets = fusedTargets.filterNot {
-                        it.tag == "STATIONARY" || (it.avgSpeedKmh != null && it.avgSpeedKmh < 45.0 && it.source == "fluger")
                     }
 
                     // Kinematics and threat assessment
@@ -522,7 +521,7 @@ class RadarForegroundService : Service() {
         val body = "$targetName летить прямо у ваш сектор: $distText$etaText. Прямуйте в укриття!"
 
         val sirenUri = getSirenUri()
-        playActiveSound(sirenUri, settings.criticalVolume)
+        playActiveSound(sirenUri, settings.criticalVolume, R.raw.fluger_siren)
 
         val notif = NotificationCompat.Builder(this, CHANNEL_CRITICAL_ID)
             .setContentTitle(title)
@@ -535,7 +534,6 @@ class RadarForegroundService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setContentIntent(pOpenIntent)
-            .setSound(sirenUri)
             .setVibrate(longArrayOf(0, 800, 200, 800, 200, 1200))
             .build()
 
@@ -570,7 +568,7 @@ class RadarForegroundService : Service() {
         }
 
         val beepUri = getBeepUri()
-        playActiveSound(beepUri, settings.sectorVolume)
+        playActiveSound(beepUri, settings.sectorVolume, R.raw.fluger_beep)
 
         val notif = NotificationCompat.Builder(this, CHANNEL_SECTOR_ID)
             .setContentTitle(title)
@@ -584,14 +582,13 @@ class RadarForegroundService : Service() {
             .setOnlyAlertOnce(true)
             .setAutoCancel(true)
             .setContentIntent(pOpenIntent)
-            .setSound(beepUri)
             .setVibrate(longArrayOf(0, 250, 150, 250))
             .build()
 
         notificationManager.notify(NOTIF_SECTOR_ID, notif)
     }
 
-    private fun playActiveSound(soundUri: Uri, volumePercent: Int) {
+    private fun playActiveSound(soundUri: Uri, volumePercent: Int, fallbackRawResId: Int? = null) {
         val vol = (volumePercent.coerceIn(0, 100) / 100.0f)
         if (vol <= 0.01f) return
         try {
@@ -613,7 +610,27 @@ class RadarForegroundService : Service() {
                 start()
             }
         } catch (e: Exception) {
-            // Channel sound will still ring via Android notification manager
+            if (fallbackRawResId != null) {
+                try {
+                    val fallbackUri = Uri.parse("${ContentResolver.SCHEME_ANDROID_RESOURCE}://$packageName/$fallbackRawResId")
+                    activeMediaPlayer = MediaPlayer().apply {
+                        setDataSource(applicationContext, fallbackUri)
+                        setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_ALARM)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                .build()
+                        )
+                        setVolume(vol, vol)
+                        setOnCompletionListener {
+                            it.release()
+                            if (activeMediaPlayer == it) activeMediaPlayer = null
+                        }
+                        prepare()
+                        start()
+                    }
+                } catch (_: Exception) {}
+            }
         }
     }
 

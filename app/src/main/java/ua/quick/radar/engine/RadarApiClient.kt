@@ -795,34 +795,49 @@ class RadarApiClient {
                 )
             }
 
-            // Strict airborne filter (matching fluger_server.py):
-            // 1. Exclude stationary signals, antenna clutter, and radar noise
-            if (tr?.isStagnant == true || cls.tag == "STATIONARY") {
-                continue
-            }
-            // 2. Strict flight threshold: >= 2 samples, speed >= 45.0 km/h, net displacement >= 0.25 km, course != null
             val netDist = tr?.history?.let { h ->
                 if (h.size >= 2) ThreatAnalyzer.haversineKm(h.first().first, h.first().second, h.last().first, h.last().second) else 0.0
             } ?: (if (target.path.size >= 2) ThreatAnalyzer.haversineKm(target.path.first()[0], target.path.first()[1], target.path.last()[0], target.path.last()[1]) else 0.0)
             val spd = target.avgSpeedKmh ?: target.instantSpeedKmh ?: 0.0
             val course = target.courseDeg ?: tr?.course
-            if (histSize < 2 || spd < 45.0 || netDist < 0.25 || course == null) {
-                continue
-            }
 
-            finalTargets.add(
-                target.copy(
-                    courseDeg = course?.let { ThreatAnalyzer.safeRound(it, 0) },
-                    courseName = course?.let { ThreatAnalyzer.bearingToCompass(it) },
-                    sampleCount = histSize,
-                    category = cls.name,
-                    sub = cls.sub,
-                    iconName = cls.iconName,
-                    tag = cls.tag,
-                    echelon = cls.echelon,
-                    count = salvoCount
+            val isMotionless = (tr?.isStagnant == true || cls.tag == "STATIONARY" || histSize < 2 || spd < 45.0 || netDist < 0.25 || course == null)
+
+            if (isMotionless) {
+                // Target is present in current Fluger scan but not moving:
+                // Show on map with unknown state '?' indicator
+                finalTargets.add(
+                    target.copy(
+                        courseDeg = null,
+                        courseName = "Без руху",
+                        sampleCount = histSize,
+                        category = "Ціль без руху ❓",
+                        sub = "Невідомий стан (сигнал без руху)",
+                        iconName = "ic_air_threat_combined_white",
+                        tag = "UNKNOWN",
+                        echelon = "Невідомо",
+                        count = 1,
+                        isStagnant = true,
+                        isUnknownState = true
+                    )
                 )
-            )
+            } else {
+                finalTargets.add(
+                    target.copy(
+                        courseDeg = course?.let { ThreatAnalyzer.safeRound(it, 0) },
+                        courseName = course?.let { ThreatAnalyzer.bearingToCompass(it) },
+                        sampleCount = histSize,
+                        category = cls.name,
+                        sub = cls.sub,
+                        iconName = cls.iconName,
+                        tag = cls.tag,
+                        echelon = cls.echelon,
+                        count = salvoCount,
+                        isStagnant = false,
+                        isUnknownState = false
+                    )
+                )
+            }
         }
 
         return finalTargets

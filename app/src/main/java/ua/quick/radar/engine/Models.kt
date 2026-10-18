@@ -25,7 +25,9 @@ data class RadarTarget(
     @SerializedName("count") val count: Int = 1,
     @SerializedName("sampleCount") val sampleCount: Int = 1,
     @SerializedName("isFused") val isFused: Boolean = false,
-    @SerializedName("isCriticalIncoming") var isCriticalIncoming: Boolean = false
+    @SerializedName("isCriticalIncoming") var isCriticalIncoming: Boolean = false,
+    @SerializedName("isStagnant") val isStagnant: Boolean = false,
+    @SerializedName("isUnknownState") val isUnknownState: Boolean = false
 )
 
 data class ClassificationResult(

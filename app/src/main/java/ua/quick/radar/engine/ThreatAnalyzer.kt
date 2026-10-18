@@ -278,7 +278,8 @@ object ThreatAnalyzer {
 
             if (course != null) {
                 val angleDiff = abs((course - bearingToUser + 180.0) % 360.0 - 180.0)
-                isHeadingToUser = angleDiff <= 45.0
+                // Strict heading threshold: within 20 degrees towards the observer
+                isHeadingToUser = angleDiff <= 20.0
 
                 val speedKmh = target.avgSpeedKmh ?: target.instantSpeedKmh ?: 180.0
                 if (speedKmh > 20.0) {
@@ -290,8 +291,8 @@ object ThreatAnalyzer {
             target.isHeadingToUser = isHeadingToUser
             target.timeToUserMin = etaMin
 
-            val isImminentProximity = dist <= 12.0
-            val isCriticalIncoming = (dist <= critRadius) && (isHeadingToUser || isImminentProximity)
+            // Critical status strictly triggers ONLY if inside critical radius AND heading directly to user (<= 20°)
+            val isCriticalIncoming = (dist <= critRadius) && isHeadingToUser
             target.isCriticalIncoming = isCriticalIncoming
 
             if (settings.criticalEnabled && isCriticalIncoming) {

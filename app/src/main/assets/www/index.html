@@ -1583,16 +1583,11 @@
 
       // Filter scout drones if enabled
       if (appSettings.hideScoutDrones) {
-        targets = targets.filter(t => t.iconName !== 'ic_drone' && t.tag !== 'UAV' && !(t.avgSpeedKmh && t.avgSpeedKmh < 135));
+        targets = targets.filter(t => (t.isUnknownState || t.isStagnant) ? true : (t.iconName !== 'ic_drone' && t.tag !== 'UAV' && !(t.avgSpeedKmh && t.avgSpeedKmh < 135)));
       }
 
-      // Filter stationary / stagnant signals & nationwide UkraineAlarm
+      // Filter nationwide UkraineAlarm & sector radius bounds (keeping unknown state / motionless targets)
       targets = targets.filter(t => {
-        if (t.tag === 'STATIONARY' || t.isStagnant === true) return false;
-        if (t.category && t.category.includes('Стаціонарний')) return false;
-        const spd = t.avgSpeedKmh || t.instantSpeedKmh || 0;
-        if (spd < 45 || t.courseDeg === null || t.courseDeg === undefined) return false;
-        if (t.sampleCount && t.sampleCount < 2 && t.source === 'fluger') return false;
         if (t.source === 'ukrainealarm' && !appSettings.uaAllUkraine) {
           if (t.distanceKm !== undefined && t.distanceKm !== null && t.distanceKm > appSettings.sectorRadiusKm * 1.15) {
             return false;
@@ -1630,10 +1625,11 @@
         const id = t.trackId;
         const lat = t.lat;
         const lng = t.lng;
-        const hasCourse = (t.courseDeg !== null && t.courseDeg !== undefined && !t.isStagnant);
+        const isUnknown = !!(t.isUnknownState || t.isStagnant || t.tag === 'UNKNOWN' || t.tag === 'STATIONARY');
+        const hasCourse = (!isUnknown && t.courseDeg !== null && t.courseDeg !== undefined && !t.isStagnant);
         const course = hasCourse ? t.courseDeg : 0;
         const inAlertZone = (t.distanceKm !== null && t.distanceKm !== undefined && t.distanceKm <= appSettings.criticalRadiusKm);
-        const isCritical = inAlertZone && (t.isHeadingToUser || t.isCriticalIncoming);
+        const isCritical = !isUnknown && inAlertZone && !!t.isCriticalIncoming;
         const isFused = !!t.isFused;
         const iconName = t.iconName || "ic_air_threat_combined_white";
 
@@ -1647,7 +1643,7 @@
         targetLayers[id] = group;
 
         // 1. Line from User to Target (Yellow in sector, Red ONLY if inside alert perimeter AND heading to user)
-        const lineColor = isCritical ? '#dc2626' : (t.source === 'ukrainealarm' ? '#38bdf8' : '#f59e0b');
+        const lineColor = isCritical ? '#dc2626' : (isUnknown ? '#eab308' : (t.source === 'ukrainealarm' ? '#38bdf8' : '#f59e0b'));
         const userLine = L.polyline([[userLat, userLng], [lat, lng]], {
           color: lineColor,
           weight: isCritical ? 2.5 : 1.2,
@@ -1658,7 +1654,7 @@
         group.addLayer(userLine);
 
         // 2. Breadcrumb Historical Flight Path
-        if (t.path && t.path.length >= 2) {
+        if (!isUnknown && t.path && t.path.length >= 2) {
           const trailColor = isCritical ? '#dc2626' : (t.source === 'ukrainealarm' ? '#38bdf8' : '#f97316');
           const trail = L.polyline(t.path, {
             color: trailColor,
@@ -1697,7 +1693,7 @@
         }
 
         // 4. Tactical Target Marker with SVG icon & heading arrow
-        const markerBorderColor = isCritical ? '#dc2626' : (isFused ? '#38bdf8' : (t.source === 'ukrainealarm' ? '#38bdf8' : '#f59e0b'));
+        const markerBorderColor = isCritical ? '#dc2626' : (isUnknown ? '#eab308' : (isFused ? '#38bdf8' : (t.source === 'ukrainealarm' ? '#38bdf8' : '#f59e0b')));
         const distText = t.distanceKm ? `${t.distanceKm.toFixed(0)} км` : '';
         const fusedClass = isFused ? 'fused-target' : '';
 
@@ -1710,7 +1706,8 @@
             <div class="marker-icon-box ${fusedClass}" style="${!isFused ? 'border-color:' + markerBorderColor + '; box-shadow:0 0 14px ' + markerBorderColor + ';' : ''}">
               <img src="${getIconSrc(iconName)}" style="${hasCourse ? `transform: rotate(${course}deg);` : ''}" alt="${t.category}" />
             </div>
-            ${distText ? `<div class="threat-tag" style="${isCritical ? 'border-color: #ef4444; color: #ff9999;' : ''}">${distText}</div>` : ''}
+            ${isUnknown ? `<div class="unknown-state-badge" style="position:absolute; top:-6px; right:-6px; background:#f59e0b; color:#0f172a; font-weight:900; font-size:12px; border-radius:50%; width:18px; height:18px; display:flex; align-items:center; justify-content:center; box-shadow:0 0 8px #f59e0b; border:1.5px solid #ffffff; z-index:15;">?</div>` : ''}
+            ${distText ? `<div class="threat-tag" style="${isCritical ? 'border-color: #ef4444; color: #ff9999;' : ''}">${distText}${isUnknown ? ' ❓' : ''}</div>` : ''}
           </div>
         `;
 
@@ -1730,13 +1727,19 @@
               <div style="background:#fee2e2; border:1px solid #ef4444; color:#b91c1c; padding:6px 8px; border-radius:6px; font-weight:800; font-size:12px; margin-bottom:8px;">
                 🚨 УВАГА! ЦІЛЬ КУРСОМ НА ВАС!${t.timeToUserMin ? `<br><small style="font-weight:600; color:#991b1b;">Орієнтовний підліт: ~${Math.round(t.timeToUserMin)} хв</small>` : ''}
               </div>` : ''}
+            ${isUnknown ? `
+              <div style="background:#fef3c7; border:1px solid #f59e0b; color:#b45309; padding:6px 8px; border-radius:6px; font-weight:700; font-size:11px; margin-bottom:8px; display:flex; align-items:center; gap:6px;">
+                <span style="font-size:15px;">❓</span>
+                <span><b>Стан невідомий:</b> Ціль є на радарі Флюгер, але зараз не рухається. Очікування оновлення.</span>
+              </div>` : ''}
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-              <div style="width:34px; height:34px; background:#0b0f19; border:2px solid ${markerBorderColor}; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
-                <img src="${getIconSrc(iconName)}" style="width:24px; height:24px; transform: rotate(${course}deg);" />
+              <div style="width:34px; height:34px; background:#0b0f19; border:2px solid ${markerBorderColor}; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; position:relative;">
+                <img src="${getIconSrc(iconName)}" style="width:24px; height:24px; ${hasCourse ? `transform: rotate(${course}deg);` : ''}" />
+                ${isUnknown ? `<div style="position:absolute; top:-4px; right:-4px; background:#f59e0b; color:#0f172a; font-weight:900; font-size:10px; border-radius:50%; width:14px; height:14px; display:flex; align-items:center; justify-content:center; border:1px solid #fff;">?</div>` : ''}
               </div>
               <div>
                 <div style="display:flex; align-items:center; gap:5px;">
-                  <b style="color:#ef4444; font-size:14px;">${t.category}</b>
+                  <b style="color:${isUnknown ? '#b45309' : '#ef4444'}; font-size:14px;">${t.category}</b>
                   ${t.count && t.count > 1 ? `<span style="background:#ef4444; color:#fff; font-size:10px; font-weight:800; padding:1px 4px; border-radius:3px;">×${t.count}</span>` : ''}
                 </div>
                 <span style="font-size:11px; color:#64748b;">${t.sub || ''}</span>
@@ -1744,8 +1747,8 @@
             </div>
             <div style="background:#f1f5f9; padding:6px 8px; border-radius:6px; font-size:11px; margin-bottom:6px;">
               <b>Джерело:</b> <span style="color:#0284c7;">${t.sourceLabel || (t.source === 'ukrainealarm' ? 'Мінцифра' : 'Флюгер')}</span><br>
-              <b>Швидкість:</b> <b style="color:#0284c7;">${t.avgSpeedKmh ? t.avgSpeedKmh + ' км/год' : (t.instantSpeedKmh ? t.instantSpeedKmh + ' км/год' : 'розраховується...')}</b><br>
-              <b>Курс:</b> ${t.courseDeg !== null ? t.courseDeg + '° (' + (t.courseName || '') + ')' : 'невідомо'}<br>
+              <b>Швидкість:</b> <b style="color:#0284c7;">${isUnknown ? 'без руху' : (t.avgSpeedKmh ? t.avgSpeedKmh + ' км/год' : (t.instantSpeedKmh ? t.instantSpeedKmh + ' км/год' : 'розраховується...'))}</b><br>
+              <b>Курс:</b> ${isUnknown ? 'без руху' : (t.courseDeg !== null ? t.courseDeg + '° (' + (t.courseName || '') + ')' : 'невідомо')}<br>
               <b>Ешелон:</b> ${t.echelon || 'визначається...'}<br>
               <b>Дистанція:</b> <b>${t.distanceKm ? t.distanceKm.toFixed(1) + ' км' : 'невідомо'}</b>
             </div>
@@ -1773,8 +1776,8 @@
 
       // Sort: critical incoming first, then closest
       const sorted = [...targets].sort((a, b) => {
-        const aCrit = (a.distanceKm <= appSettings.criticalRadiusKm) && (a.isHeadingToUser || a.isCriticalIncoming);
-        const bCrit = (b.distanceKm <= appSettings.criticalRadiusKm) && (b.isHeadingToUser || b.isCriticalIncoming);
+        const aCrit = (a.distanceKm <= appSettings.criticalRadiusKm) && !!a.isCriticalIncoming;
+        const bCrit = (b.distanceKm <= appSettings.criticalRadiusKm) && !!b.isCriticalIncoming;
         if (aCrit && !bCrit) return -1;
         if (!aCrit && bCrit) return 1;
         return (a.distanceKm || 999) - (b.distanceKm || 999);
@@ -1782,24 +1785,26 @@
 
       let html = "";
       for (const t of sorted) {
+        const isUnknown = !!(t.isUnknownState || t.isStagnant || t.tag === 'UNKNOWN' || t.tag === 'STATIONARY');
         const iconName = t.iconName || "ic_air_threat_combined_white";
         const spd = t.avgSpeedKmh || t.instantSpeedKmh;
-        const spdText = spd ? `${Math.round(spd)} км/год` : "швидкість...";
+        const spdText = isUnknown ? "без руху" : (spd ? `${Math.round(spd)} км/год` : "швидкість...");
         const distText = t.distanceKm ? `${t.distanceKm.toFixed(1)} км` : "-- км";
-        const courseText = t.courseDeg !== null ? `${t.courseDeg}° ${t.courseName || ''}` : "курс...";
-        const etaText = t.timeToUserMin ? ` • ETA: ~${Math.round(t.timeToUserMin)} хв` : "";
+        const courseText = isUnknown ? "курс: без руху" : (t.courseDeg !== null ? `${t.courseDeg}° ${t.courseName || ''}` : "курс...");
+        const etaText = (!isUnknown && t.timeToUserMin) ? ` • ETA: ~${Math.round(t.timeToUserMin)} хв` : "";
         const inAlertZone = (t.distanceKm !== null && t.distanceKm !== undefined && t.distanceKm <= appSettings.criticalRadiusKm);
-        const isCritical = inAlertZone && (t.isHeadingToUser || t.isCriticalIncoming);
+        const isCritical = !isUnknown && inAlertZone && !!t.isCriticalIncoming;
 
         html += `
           <div class="threat-card ${isCritical ? 'critical-threat' : ''}" onclick="focusTargetOnMap(${t.lat}, ${t.lng}, '${t.trackId}')">
             <div class="threat-card-left">
-              <div class="threat-icon-box">
+              <div class="threat-icon-box" style="position:relative;">
                 <img src="${getIconSrc(iconName)}" alt="icon" />
+                ${isUnknown ? `<div style="position:absolute; top:-3px; right:-3px; background:#f59e0b; color:#0f172a; font-weight:900; font-size:9px; border-radius:50%; width:13px; height:13px; display:flex; align-items:center; justify-content:center; border:1px solid #fff;">?</div>` : ''}
               </div>
               <div style="min-width: 0;">
                 <div class="threat-title-line">
-                  <span>${t.category}</span>
+                  <span style="${isUnknown ? 'color:#f59e0b;' : ''}">${t.category}</span>
                   ${t.count && t.count > 1 ? `<span style="background:#ef4444; color:#fff; font-size:10px; font-weight:800; padding:1px 4px; border-radius:3px;">×${t.count}</span>` : ''}
                   ${isCritical ? '<span style="color:#ef4444; font-size:10px; font-weight:800;">🚨 НА ВАС!</span>' : ''}
                 </div>
@@ -1811,7 +1816,7 @@
                 </div>
               </div>
             </div>
-            <div class="threat-speed-pill" style="${isCritical ? 'background:#ef4444;' : 'background:#334155;'}">
+            <div class="threat-speed-pill" style="${isCritical ? 'background:#ef4444;' : (isUnknown ? 'background:#d97706; color:#fff;' : 'background:#334155;')}">
               ${spdText}
             </div>
           </div>
