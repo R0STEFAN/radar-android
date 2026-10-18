@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Флюгер Радар</title>
+  <link rel="stylesheet" href="vendor/leaflet.css" />
+  <style>
+    :root {
+      --bg-dark: #0b0f19;
+      --card-bg: rgba(18, 24, 38, 0.94);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --red-alert: #ef4444;
+      --red-glow: rgba(239, 68, 68, 0.35);
+      --yellow-alert: #f59e0b;
+      --yellow-glow: rgba(245, 158, 11, 0.35);
+      --green-safe: #10b981;
+      --blue-accent: #3b82f6;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      background: var(--bg-dark);
+      color: var(--text-main);
+      overflow: hidden;
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+      background: #090d16;
+    }
+
+    /* Top HUD */
+    .top-hud {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .hud-banner {
+      pointer-events: auto;
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      transition: all 0.3s ease;
+    }
+
+    .hud-banner.critical {
+      border-color: var(--red-alert);
+      background: rgba(45, 14, 18, 0.95);
+      box-shadow: 0 0 25px var(--red-glow);
+      animation: pulse-border 1.5s infinite alternate;
+    }
+
+    .hud-banner.sector {
+      border-color: var(--yellow-alert);
+      background: rgba(45, 34, 12, 0.95);
+      box-shadow: 0 0 20px var(--yellow-glow);
+    }
+
+    .status-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-beacon {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--green-safe);
+      box-shadow: 0 0 10px var(--green-safe);
+      position: relative;
+    }
+
+    .status-beacon::after {
+      content: '';
+      position: absolute;
+      top: -3px; left: -3px; right: -3px; bottom: -3px;
+      border-radius: 50%;
+      border: 1px solid var(--green-safe);
+      animation: ripple 2s infinite ease-out;
+    }
+
+    .critical .status-beacon {
+      background: var(--red-alert);
+      box-shadow: 0 0 12px var(--red-alert);
+    }
+    .critical .status-beacon::after {
+      border-color: var(--red-alert);
+    }
+
+    .sector .status-beacon {
+      background: var(--yellow-alert);
+      box-shadow: 0 0 12px var(--yellow-alert);
+    }
+    .sector .status-beacon::after {
+      border-color: var(--yellow-alert);
+    }
+
+    .status-title {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+
+    .status-desc {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .btn-panel-toggle {
+      pointer-events: auto;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Floating quick stats */
+    .quick-counters {
+      pointer-events: auto;
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .stat-chip {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+      backdrop-filter: blur(8px);
+    }
+
+    .stat-chip.active {
+      border-color: var(--red-alert);
+      color: #ff8888;
+    }
+
+    /* Floating map action buttons */
+    .map-controls {
+      position: absolute;
+      right: 12px;
+      bottom: 90px;
+      z-index: 999;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .map-fab {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+    }
+
+    .map-fab.pinning {
+      border-color: var(--blue-accent);
+      background: rgba(59, 130, 246, 0.3);
+      box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+    }
+
+    /* Bottom Control Sheet */
+    .bottom-sheet {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 1001;
+      background: var(--card-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-top: 1px solid var(--card-border);
+      border-top-left-radius: 20px;
+      border-top-right-radius: 20px;
+      padding: 12px 16px 24px 16px;
+      box-shadow: 0 -8px 30px rgba(0,0,0,0.6);
+      transform: translateY(calc(100% - 64px));
+      transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      max-height: 82vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .bottom-sheet.expanded {
+      transform: translateY(0);
+    }
+
+    .sheet-handle {
+      width: 40px;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.3);
+      margin: 0 auto 10px auto;
+      cursor: pointer;
+    }
+
+    .sheet-header-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 38px;
+      cursor: pointer;
+    }
+
+    .sheet-title {
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .sheet-scrollable {
+      overflow-y: auto;
+      margin-top: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding-bottom: 20px;
+    }
+
+    /* Settings Cards */
+    .settings-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .card-title-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .card-subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* Modern Switch */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 46px;
+      height: 26px;
+      flex-shrink: 0;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: rgba(255, 255, 255, 0.2);
+      transition: .3s;
+      border-radius: 26px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 20px;
+      width: 20px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .3s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider {
+      background-color: var(--blue-accent);
+    }
+    input:checked + .slider.critical {
+      background-color: var(--red-alert);
+    }
+    input:checked + .slider.sector {
+      background-color: var(--yellow-alert);
+    }
+    input:checked + .slider:before {
+      transform: translateX(20px);
+    }
+
+    /* Range slider */
+    .slider-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .slider-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .slider-labels span.val {
+      color: var(--text-main);
+      font-weight: 700;
+    }
+
+    input[type=range] {
+      width: 100%;
+      height: 5px;
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.15);
+      outline: none;
+      -webkit-appearance: none;
+    }
+
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    /* Sound row */
+    .sound-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 11px;
+    }
+
+    .sound-name {
+      color: var(--text-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 170px;
+    }
+
+    .sound-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .btn-mini {
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* Buttons block */
+    .btn-block {
+      width: 100%;
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      color: #93c5fd;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    /* Pulsing user radar marker */
+    .user-marker-container {
+      position: relative;
+      width: 24px;
+      height: 24px;
+    }
+
+    .user-marker-core {
+      width: 14px;
+      height: 14px;
+      background: #38bdf8;
+      border: 2px solid #ffffff;
+      border-radius: 50%;
+      position: absolute;
+      top: 5px;
+      left: 5px;
+      box-shadow: 0 0 12px #38bdf8;
+    }
+
+    .user-marker-pulse {
+      position: absolute;
+      top: 0; left: 0; width: 24px; height: 24px;
+      border-radius: 50%;
+      border: 2px solid #38bdf8;
+      animation: pulse-ring 2s infinite ease-out;
+    }
+
+    /* Threat Marker Styles */
+    .threat-leaflet-marker {
+      position: relative;
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .threat-icon-rotator {
+      width: 32px;
+      height: 32px;
+      transition: transform 0.5s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .threat-icon-rotator img {
+      width: 28px;
+      height: 28px;
+      filter: drop-shadow(0 2px 5px rgba(0,0,0,0.8));
+    }
+
+    .threat-tag {
+      position: absolute;
+      bottom: -6px;
+      background: rgba(0,0,0,0.85);
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: 700;
+      color: #fff;
+      padding: 1px 4px;
+      white-space: nowrap;
+    }
+
+    .threat-warning-halo {
+      position: absolute;
+      top: -2px; left: -2px; width: 48px; height: 48px;
+      border-radius: 50%;
+      border: 2px dashed var(--red-alert);
+      animation: halo-rotate 4s infinite linear;
+    }
+
+    @keyframes ripple {
+      0% { transform: scale(1); opacity: 0.8; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+
+    @keyframes pulse-ring {
+      0% { transform: scale(0.6); opacity: 1; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+
+    @keyframes pulse-border {
+      0% { box-shadow: 0 0 10px var(--red-glow); }
+      100% { box-shadow: 0 0 25px rgba(239, 68, 68, 0.7); }
+    }
+
+    @keyframes halo-rotate {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Tactical HUD -->
+  <div class="top-hud">
+    <div id="hudBanner" class="hud-banner">
+      <div class="status-left">
+        <div id="statusBeacon" class="status-beacon"></div>
+        <div>
+          <div id="statusTitle" class="status-title">Радар: Сканування...</div>
+          <div id="statusDesc" class="status-desc">Очікування даних з сенсорів</div>
+        </div>
+      </div>
+      <button class="btn-panel-toggle" onclick="toggleBottomSheet()">
+        <span>⚙️ Налаштування</span>
+      </button>
+    </div>
+
+    <!-- Quick threat count chips -->
+    <div class="quick-counters">
+      <div id="chipShahed" class="stat-chip">🛩️ Шахеди: 0</div>
+      <div id="chipKab" class="stat-chip">💣 КАБи: 0</div>
+      <div id="chipMissile" class="stat-chip">🚀 Ракети: 0</div>
+      <div id="chipDrone" class="stat-chip">🛸 БПЛА: 0</div>
+    </div>
+  </div>
+
+  <!-- Map Container -->
+  <div id="map"></div>
+
+  <!-- Map Action Controls -->
+  <div class="map-controls">
+    <button id="btnPinLocation" class="map-fab" title="Встановити точку на карті" onclick="togglePinMode()">📍</button>
+    <button id="btnGps" class="map-fab" title="Оновити по GPS (із захистом від РЕБ)" onclick="requestGps()">🛰️</button>
+    <button class="map-fab" title="Центрувати на позиції" onclick="centerOnUser()">🎯</button>
+  </div>
+
+  <!-- Bottom Drawer Settings Sheet -->
+  <div id="bottomSheet" class="bottom-sheet">
+    <div class="sheet-handle" onclick="toggleBottomSheet()"></div>
+    <div class="sheet-header-summary" onclick="toggleBottomSheet()">
+      <div class="sheet-title">🛡️ Параметри захисту та оповіщень</div>
+      <span id="sheetExpandIcon" style="font-size: 14px; color: var(--text-muted)">▲</span>
+    </div>
+
+    <div class="sheet-scrollable">
+
+      <!-- Pinned Location Card (Anti-EW protection) -->
+      <div class="settings-card">
+        <div class="card-top">
+          <div class="card-title-group">
+            <span style="font-size: 16px;">📍</span>
+            <div>
+              <div class="card-title">Точка спостереження (Захист від РЕБ)</div>
+              <div id="pinnedCoordsText" class="card-subtitle">50.4501, 30.5234 (Київ)</div>
+            </div>
+          </div>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); line-height: 1.4;">
+          Координати фіксуються вручну для захисту від підміни GPS ворожими засобами РЕБ (скид у Ліму або аеропорти).
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-block" onclick="togglePinMode()" style="flex: 1;">
+            <span>📍 Поставити на карті</span>
+          </button>
+          <button class="btn-block" onclick="requestGps()" style="flex: 1;">
+            <span>🛰️ По GPS (з перевіркою)</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Critical Channel Card -->
+      <div class="settings-card">
+        <div class="card-top">
+          <div class="card-title-group">
+            <span style="font-size: 18px;">🚨</span>
+            <div>
+              <div class="card-title">Критична тривога (Курс на вас)</div>
+              <div class="card-subtitle">Гучний сигнал при векторі атаки в радіусі загрози</div>
+            </div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggleCritical" onchange="onSettingsChanged()">
+            <span class="slider critical"></span>
+          </label>
+        </div>
+
+        <div class="slider-row">
+          <div class="slider-labels">
+            <span>Радіус спрацювання:</span>
+            <span id="labelCriticalRadius" class="val">40 км</span>
+          </div>
+          <input type="range" id="sliderCriticalRadius" min="15" max="45" step="1" value="40" oninput="onCriticalRadiusInput(this.value)" onchange="onSettingsChanged()">
+        </div>
+
+        <div class="sound-row">
+          <div>
+            <div style="font-weight:600">Звуковий сигнал:</div>
+            <div id="labelCriticalSound" class="sound-name">Флюгер Сирена (920 ↔ 640 Hz)</div>
+          </div>
+          <div class="sound-actions">
+            <button class="btn-mini" onclick="pickSound('critical')">Змінити</button>
+            <button class="btn-mini" onclick="resetSound('critical')">Скинути</button>
+            <button class="btn-mini" onclick="testSound('critical')">▶️ Тест</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sector Awareness Channel Card -->
+      <div class="settings-card">
+        <div class="card-top">
+          <div class="card-title-group">
+            <span style="font-size: 18px;">🟡</span>
+            <div>
+              <div class="card-title">Спостереження сектора</div>
+              <div class="card-subtitle">Оповіщення про появу цілей у ширшій зоні огляду</div>
+            </div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggleSector" onchange="onSettingsChanged()">
+            <span class="slider sector"></span>
+          </label>
+        </div>
+
+        <div class="slider-row">
+          <div class="slider-labels">
+            <span>Радіус сектора огляду:</span>
+            <span id="labelSectorRadius" class="val">100 км</span>
+          </div>
+          <input type="range" id="sliderSectorRadius" min="45" max="140" step="5" value="100" oninput="onSectorRadiusInput(this.value)" onchange="onSettingsChanged()">
+        </div>
+
+        <div class="sound-row">
+          <div>
+            <div style="font-weight:600">Звуковий сигнал:</div>
+            <div id="labelSectorSound" class="sound-name">Тактичний Сонар (880 Hz)</div>
+          </div>
+          <div class="sound-actions">
+            <button class="btn-mini" onclick="pickSound('sector')">Змінити</button>
+            <button class="btn-mini" onclick="resetSound('sector')">Скинути</button>
+            <button class="btn-mini" onclick="testSound('sector')">▶️ Тест</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Background Service & Battery Optimization -->
+      <div class="settings-card">
+        <div class="card-top">
+          <div class="card-title-group">
+            <span style="font-size: 16px;">🔋</span>
+            <div>
+              <div class="card-title">Автономний моніторинг 24/7</div>
+              <div class="card-subtitle">Робота сервісу при заблокованому екрані</div>
+            </div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggleService" onchange="onSettingsChanged()">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <button class="btn-block" onclick="requestBatteryOptimizationExemption()">
+          <span>⚡ Дозволити безперервну роботу у фоні (Вимкнути оптимізацію)</span>
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="vendor/leaflet.js"></script>
+  <script>
+    // --- State & Settings ---
+    let appSettings = {
+      pinnedLat: 50.4501,
+      pinnedLng: 30.5234,
+      pinnedName: "Київ",
+      criticalEnabled: true,
+      criticalRadiusKm: 40,
+      criticalSoundUri: "",
+      sectorEnabled: true,
+      sectorRadiusKm: 100,
+      sectorSoundUri: "",
+      serviceEnabled: true
+    };
+
+    let map = null;
+    let userMarker = null;
+    let criticalCircle = null;
+    let sectorCircle = null;
+    let targetMarkers = {};
+    let targetPolylines = {};
+    let isPinModeActive = false;
+
+    // --- Bridge Helpers ---
+    function callBridge(funcName, ...args) {
+      if (window.AndroidBridge && typeof window.AndroidBridge[funcName] === 'function') {
+        return window.AndroidBridge[funcName](...args);
+      }
+      return null;
+    }
+
+    // --- Init ---
+    window.addEventListener("DOMContentLoaded", () => {
+      loadSettingsFromNative();
+      initMap();
+      renderUserPosition();
+      updateRadarData();
+    });
+
+    function loadSettingsFromNative() {
+      const json = callBridge("getSettings");
+      if (json) {
+        try {
+          appSettings = JSON.parse(json);
+        } catch (e) {
+          console.error("Failed to parse native settings", e);
+        }
+      }
+      applySettingsToUI();
+    }
+
+    function applySettingsToUI() {
+      document.getElementById("toggleCritical").checked = appSettings.criticalEnabled;
+      document.getElementById("sliderCriticalRadius").value = appSettings.criticalRadiusKm;
+      document.getElementById("labelCriticalRadius").textContent = `${appSettings.criticalRadiusKm} км`;
+
+      document.getElementById("toggleSector").checked = appSettings.sectorEnabled;
+      document.getElementById("sliderSectorRadius").value = appSettings.sectorRadiusKm;
+      document.getElementById("labelSectorRadius").textContent = `${appSettings.sectorRadiusKm} км`;
+
+      document.getElementById("toggleService").checked = appSettings.serviceEnabled;
+
+      document.getElementById("pinnedCoordsText").textContent =
+        `${appSettings.pinnedLat.toFixed(4)}, ${appSettings.pinnedLng.toFixed(4)} (${appSettings.pinnedName})`;
+
+      document.getElementById("labelCriticalSound").textContent =
+        appSettings.criticalSoundUri ? "Кастомний аудіофайл" : "Флюгер Сирена (920 ↔ 640 Hz)";
+      document.getElementById("labelSectorSound").textContent =
+        appSettings.sectorSoundUri ? "Кастомний аудіофайл" : "Тактичний Сонар (880 Hz)";
+    }
+
+    function onSettingsChanged() {
+      appSettings.criticalEnabled = document.getElementById("toggleCritical").checked;
+      appSettings.criticalRadiusKm = parseFloat(document.getElementById("sliderCriticalRadius").value);
+      appSettings.sectorEnabled = document.getElementById("toggleSector").checked;
+      appSettings.sectorRadiusKm = parseFloat(document.getElementById("sliderSectorRadius").value);
+      appSettings.serviceEnabled = document.getElementById("toggleService").checked;
+
+      callBridge("saveSettings", JSON.stringify(appSettings));
+      renderUserPosition();
+    }
+
+    function onCriticalRadiusInput(val) {
+      document.getElementById("labelCriticalRadius").textContent = `${val} км`;
+      if (criticalCircle) {
+        criticalCircle.setRadius(val * 1000);
+      }
+    }
+
+    function onSectorRadiusInput(val) {
+      document.getElementById("labelSectorRadius").textContent = `${val} км`;
+      if (sectorCircle) {
+        sectorCircle.setRadius(val * 1000);
+      }
+    }
+
+    // --- Leaflet Map Init ---
+    function initMap() {
+      map = L.map("map", {
+        zoomControl: false,
+        attributionControl: false,
+        minZoom: 5,
+        maxZoom: 18
+      }).setView([appSettings.pinnedLat, appSettings.pinnedLng], 8);
+
+      // Dark tactical CartoDB tile layer
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+        subdomains: "abcd",
+        maxZoom: 19
+      }).addTo(map);
+
+      map.on("click", (e) => {
+        if (isPinModeActive) {
+          setNewPinnedLocation(e.latlng.lat, e.latlng.lng, "Ручна точка");
+          togglePinMode(false);
+        }
+      });
+    }
+
+    function renderUserPosition() {
+      if (!map) return;
+      const lat = appSettings.pinnedLat;
+      const lng = appSettings.pinnedLng;
+
+      // Pinned user pulse marker
+      const userIcon = L.divIcon({
+        className: "user-marker-container",
+        html: `
+          <div class="user-marker-pulse"></div>
+          <div class="user-marker-core"></div>
+        `,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+      });
+
+      if (userMarker) {
+        userMarker.setLatLng([lat, lng]);
+      } else {
+        userMarker = L.marker([lat, lng], {
+          icon: userIcon,
+          zIndexOffset: 1000,
+          draggable: true
+        }).addTo(map);
+
+        userMarker.on("dragend", (e) => {
+          const pos = e.target.getLatLng();
+          setNewPinnedLocation(pos.lat, pos.lng, "Ручна точка");
+        });
+      }
+
+      // 1. Critical Alert Zone Ring (Red dashed)
+      const critRadiusMeters = appSettings.criticalRadiusKm * 1000;
+      if (criticalCircle) {
+        criticalCircle.setLatLng([lat, lng]);
+        criticalCircle.setRadius(critRadiusMeters);
+        criticalCircle.setStyle({ opacity: appSettings.criticalEnabled ? 0.8 : 0.25 });
+      } else {
+        criticalCircle = L.circle([lat, lng], {
+          radius: critRadiusMeters,
+          color: "#ef4444",
+          dashArray: "6, 6",
+          weight: 2,
+          fillColor: "#ef4444",
+          fillOpacity: 0.05
+        }).addTo(map);
+      }
+
+      // 2. Sector Awareness Zone Ring (Yellow dashed)
+      const sectRadiusMeters = appSettings.sectorRadiusKm * 1000;
+      if (sectorCircle) {
+        sectorCircle.setLatLng([lat, lng]);
+        sectorCircle.setRadius(sectRadiusMeters);
+        sectorCircle.setStyle({ opacity: appSettings.sectorEnabled ? 0.7 : 0.2 });
+      } else {
+        sectorCircle = L.circle([lat, lng], {
+          radius: sectRadiusMeters,
+          color: "#f59e0b",
+          dashArray: "4, 8",
+          weight: 1.5,
+          fillColor: "#f59e0b",
+          fillOpacity: 0.03
+        }).addTo(map);
+      }
+    }
+
+    function setNewPinnedLocation(lat, lng, name) {
+      const ok = callBridge("setPinnedLocation", lat, lng, name);
+      if (ok || ok === null) {
+        appSettings.pinnedLat = lat;
+        appSettings.pinnedLng = lng;
+        appSettings.pinnedName = name;
+        applySettingsToUI();
+        renderUserPosition();
+        updateRadarData();
+      }
+    }
+
+    function togglePinMode(forceState) {
+      isPinModeActive = forceState !== undefined ? forceState : !isPinModeActive;
+      const btn = document.getElementById("btnPinLocation");
+      if (isPinModeActive) {
+        btn.classList.add("pinning");
+        callBridge("showToast", "Торкніться карти для встановлення позиції");
+      } else {
+        btn.classList.remove("pinning");
+      }
+    }
+
+    function requestGps() {
+      callBridge("requestGpsLocation");
+    }
+
+    function centerOnUser() {
+      if (map) {
+        map.flyTo([appSettings.pinnedLat, appSettings.pinnedLng], 9, { duration: 0.8 });
+      }
+    }
+
+    function pickSound(type) {
+      callBridge("pickSound", type);
+    }
+
+    function resetSound(type) {
+      callBridge("resetSoundToDefault", type);
+      if (type === "critical") {
+        appSettings.criticalSoundUri = "";
+      } else {
+        appSettings.sectorSoundUri = "";
+      }
+      applySettingsToUI();
+    }
+
+    function testSound(type) {
+      callBridge("testSound", type);
+    }
+
+    function requestBatteryOptimizationExemption() {
+      callBridge("requestBatteryOptimizationExemption");
+    }
+
+    // --- Real-Time Radar Rendering ---
+    function updateRadarData() {
+      const targetsJson = callBridge("getCurrentTargets");
+      const assessJson = callBridge("getAssessment");
+
+      if (!targetsJson) return;
+
+      let targets = [];
+      let assessment = null;
+      try {
+        targets = JSON.parse(targetsJson);
+      } catch (e) {
+        targets = [];
+      }
+
+      try {
+        if (assessJson) assessment = JSON.parse(assessJson);
+      } catch (e) {
+        assessment = null;
+      }
+
+      renderThreatsOnMap(targets);
+      updateTopHud(targets, assessment);
+    }
+
+    function renderThreatsOnMap(targets) {
+      if (!map) return;
+
+      const currentIds = new Set(targets.map(t => t.trackId));
+
+      // Remove stale markers & tracks
+      for (const id in targetMarkers) {
+        if (!currentIds.has(id)) {
+          map.removeLayer(targetMarkers[id]);
+          delete targetMarkers[id];
+        }
+      }
+      for (const id in targetPolylines) {
+        if (!currentIds.has(id)) {
+          map.removeLayer(targetPolylines[id]);
+          delete targetPolylines[id];
+        }
+      }
+
+      // Counters
+      let shahedCount = 0;
+      let kabCount = 0;
+      let missileCount = 0;
+      let droneCount = 0;
+
+      for (const t of targets) {
+        const id = t.trackId;
+        const lat = t.lat;
+        const lng = t.lng;
+        const course = t.courseDeg || 0;
+        const isHeading = t.isHeadingToUser;
+        const iconName = t.iconName || "ic_air_threat_combined_white";
+
+        if (iconName.includes("shahed")) shahedCount += (t.count || 1);
+        else if (iconName.includes("airbomb")) kabCount += (t.count || 1);
+        else if (iconName.includes("missile") || iconName.includes("ballistic")) missileCount += (t.count || 1);
+        else droneCount += (t.count || 1);
+
+        const iconHtml = `
+          <div class="threat-leaflet-marker">
+            ${isHeading ? '<div class="threat-warning-halo"></div>' : ''}
+            <div class="threat-icon-rotator" style="transform: rotate(${course}deg);">
+              <img src="icons/${iconName}.svg" alt="threat" />
+            </div>
+            <div class="threat-tag" style="${isHeading ? 'border-color: #ef4444; color: #ff9999;' : ''}">
+              ${t.distanceKm ? t.distanceKm.toFixed(0) + ' км' : ''}
+            </div>
+          </div>
+        `;
+
+        const threatIcon = L.divIcon({
+          className: "custom-threat-div",
+          html: iconHtml,
+          iconSize: [44, 44],
+          iconAnchor: [22, 22]
+        });
+
+        if (targetMarkers[id]) {
+          targetMarkers[id].setLatLng([lat, lng]);
+          targetMarkers[id].setIcon(threatIcon);
+        } else {
+          const marker = L.marker([lat, lng], { icon: threatIcon, zIndexOffset: 800 }).addTo(map);
+          marker.bindPopup(`
+            <div style="font-size: 13px; line-height: 1.5; color: #111;">
+              <strong>${t.category}</strong><br/>
+              <span>Відстань: <b>${t.distanceKm ? t.distanceKm.toFixed(1) + ' км' : 'невідомо'}</b></span><br/>
+              <span>Курс: <b>${t.courseDeg !== null ? t.courseDeg + '° (' + (t.courseName || '') + ')' : 'невідомо'}</b></span><br/>
+              <span>Швидкість: <b>${t.avgSpeedKmh ? t.avgSpeedKmh + ' км/год' : (t.instantSpeedKmh ? t.instantSpeedKmh + ' км/год' : 'невідомо')}</b></span><br/>
+              ${isHeading ? '<span style="color: #dc2626; font-weight: 700;">🚨 КУРС ПРЯМО НА ВАС!</span><br/>' : ''}
+              <span style="font-size: 11px; color: #666;">${t.sub || t.sourceLabel}</span>
+            </div>
+          `);
+          targetMarkers[id] = marker;
+        }
+
+        // Draw track trail
+        if (t.path && t.path.length >= 2) {
+          const pathPoints = t.path.map(p => [p[0], p[1]]);
+          if (targetPolylines[id]) {
+            targetPolylines[id].setLatLngs(pathPoints);
+          } else {
+            const poly = L.polyline(pathPoints, {
+              color: isHeading ? "#ef4444" : "#f59e0b",
+              weight: isHeading ? 3 : 2,
+              opacity: 0.7,
+              dashArray: "4, 6"
+            }).addTo(map);
+            targetPolylines[id] = poly;
+          }
+        }
+      }
+
+      // Update counters
+      document.getElementById("chipShahed").textContent = `🛩️ Шахеди: ${shahedCount}`;
+      document.getElementById("chipKab").textContent = `💣 КАБи: ${kabCount}`;
+      document.getElementById("chipMissile").textContent = `🚀 Ракети: ${missileCount}`;
+      document.getElementById("chipDrone").textContent = `🛸 БПЛА: ${droneCount}`;
+
+      document.getElementById("chipShahed").classList.toggle("active", shahedCount > 0);
+      document.getElementById("chipKab").classList.toggle("active", kabCount > 0);
+      document.getElementById("chipMissile").classList.toggle("active", missileCount > 0);
+    }
+
+    function updateTopHud(targets, assessment) {
+      const banner = document.getElementById("hudBanner");
+      const title = document.getElementById("statusTitle");
+      const desc = document.getElementById("statusDesc");
+
+      banner.classList.remove("critical", "sector");
+
+      if (assessment && assessment.isCritical) {
+        banner.classList.add("critical");
+        title.textContent = "🚨 НЕБЕЗПЕКА: КУРС НА ВАС!";
+        desc.textContent = assessment.summaryText;
+      } else if (assessment && assessment.isSector) {
+        banner.classList.add("sector");
+        title.textContent = "🟡 СПОСТЕРЕЖЕННЯ: ЦІЛІ В СЕКТОРІ";
+        desc.textContent = assessment.summaryText;
+      } else {
+        title.textContent = "🟢 СЕКТОР ЧИСТИЙ";
+        desc.textContent = `Моніторинг активний (${appSettings.sectorRadiusKm} км)`;
+      }
+    }
+
+    function toggleBottomSheet() {
+      const sheet = document.getElementById("bottomSheet");
+      const icon = document.getElementById("sheetExpandIcon");
+      sheet.classList.toggle("expanded");
+      icon.textContent = sheet.classList.contains("expanded") ? "▼" : "▲";
+    }
+
+    // --- Native Callbacks ---
+    window.onRadarDataUpdated = function() {
+      updateRadarData();
+    };
+
+    window.onGpsLocationUpdated = function(lat, lng) {
+      appSettings.pinnedLat = lat;
+      appSettings.pinnedLng = lng;
+      appSettings.pinnedName = "GPS Позиція";
+      applySettingsToUI();
+      renderUserPosition();
+      centerOnUser();
+    };
+
+    window.onSoundUpdated = function(type, uri) {
+      if (type === "critical") {
+        appSettings.criticalSoundUri = uri;
+      } else {
+        appSettings.sectorSoundUri = uri;
+      }
+      applySettingsToUI();
+    };
+  </script>
+</body>
+</html>

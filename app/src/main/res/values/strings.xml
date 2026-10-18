@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Флюгер Радар</string>
+    <string name="service_name">Флюгер Моніторинг Загроз</string>
+    <string name="channel_service_name">Фоновий моніторинг</string>
+    <string name="channel_service_desc">Відображає постійний статус активності радара</string>
+    <string name="channel_critical_name">🚨 Критична тривога (Курс на вас)</string>
+    <string name="channel_critical_desc">Сповіщення про цілі, що рухаються прямо на вашу позицію</string>
+    <string name="channel_sector_name">🟡 Спостереження сектора</string>
+    <string name="channel_sector_desc">Сповіщення про повітряні цілі у вибраному секторі огляду</string>
+</resources>

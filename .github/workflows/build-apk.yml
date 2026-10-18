@@ -1,0 +1,61 @@
+name: Build & Release Android APK
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Make Gradlew Executable
+        run: chmod +x ./gradlew
+
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluger-radar-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/heads/main')
+        with:
+          tag_name: v1.0.0
+          name: Fluger Radar Android v1.0.0
+          body: |
+            ### 📡 Fluger Radar Android APK
+            
+            Автономний Android-застосунок для тактичного моніторингу повітряного простору та сповіщення про загрози.
+            
+            #### 🚀 Основні можливості:
+            - **Прямий зв'язок (Direct Connection):** Опитування напряму серверів `radar.quick.ua` та `map.ukrainealarm.com` без проксі.
+            - **24/7 Фоновий режим (ForegroundService):** Автономна робота з WAKE_LOCK та вимкненою оптимізацією батареї.
+            - **Захист від РЕБ / спуфінгу GPS:** Пріоритет ручного встановлення точки спостереження на карті та валідація кордонів України.
+            - **Двоканальні незалежні сповіщення:**
+              - 🚨 **Критичний канал (Курс на вас):** Гучна сирена (920 ↔ 640 Hz) або власний аудіофайл, heads-up банер.
+              - 🟡 **Канал сектора:** Тактичний сонар (880 Hz) або власний звук, окремий тумблер увімкнення/вимкнення.
+            - **Крос-сенсорна фузія:** Об'єднання радіолокаційних засічок Флюгера та офіційних треків Мінцифри/ПС.
+            
+            #### 📲 Встановлення:
+            Завантажте файл `app-release.apk` нижче та встановіть на смартфон Android (версія 8.0 або новіша).
+          files: app/build/outputs/apk/release/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
