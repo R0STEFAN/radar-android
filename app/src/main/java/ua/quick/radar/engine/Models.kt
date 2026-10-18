@@ -26,6 +26,15 @@ data class RadarTarget(
     @SerializedName("isFused") val isFused: Boolean = false
 )
 
+data class ClassificationResult(
+    val name: String,
+    val sub: String,
+    val icon: String,
+    val iconName: String,
+    val tag: String,
+    val echelon: String
+)
+
 data class AlertAssessment(
     val isCritical: Boolean,
     val isSector: Boolean,

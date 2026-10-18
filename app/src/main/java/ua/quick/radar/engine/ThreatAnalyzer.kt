@@ -47,6 +47,205 @@ object ThreatAnalyzer {
         return directions[index]
     }
 
+    fun getDestinationPoint(lat: Double, lng: Double, distMeters: Double, bearingDeg: Double): Pair<Double, Double> {
+        val r = 6371e3
+        val d = distMeters / r
+        val brng = Math.toRadians(bearingDeg)
+        val lat1 = Math.toRadians(lat)
+        val lon1 = Math.toRadians(lng)
+
+        val lat2 = asin(sin(lat1) * cos(d) + cos(lat1) * sin(d) * cos(brng))
+        val lon2 = lon1 + atan2(sin(brng) * sin(d) * cos(lat1), cos(d) - sin(lat1) * sin(lat2))
+        return Pair(Math.toDegrees(lat2), (Math.toDegrees(lon2) + 540.0) % 360.0 - 180.0)
+    }
+
+    fun smoothTrajectory(history: List<Pair<Double, Double>>): List<List<Double>> {
+        if (history.isEmpty()) return emptyList()
+        if (history.size < 3) {
+            return history.map { listOf(safeRound(it.first, 5), safeRound(it.second, 5)) }
+        }
+
+        val filtered = history.toMutableList()
+        val n = filtered.size
+        for (i in 1 until n - 1) {
+            val pPrev = filtered[i - 1]
+            val pCurr = filtered[i]
+            val pNext = filtered[i + 1]
+
+            val midLat = (pPrev.first + pNext.first) / 2.0
+            val midLng = (pPrev.second + pNext.second) / 2.0
+            val dSpike = haversineKm(pCurr.first, pCurr.second, midLat, midLng)
+            val dStep = haversineKm(pPrev.first, pPrev.second, pNext.first, pNext.second)
+
+            if (dSpike > 1.0 && dSpike > dStep * 0.6) {
+                filtered[i] = Pair(midLat, midLng)
+            }
+        }
+
+        var smoothed = filtered.toList()
+        repeat(2) {
+            val temp = smoothed.toMutableList()
+            for (i in 1 until n - 1) {
+                val lat = 0.20 * smoothed[i - 1].first + 0.60 * smoothed[i].first + 0.20 * smoothed[i + 1].first
+                val lng = 0.20 * smoothed[i - 1].second + 0.60 * smoothed[i].second + 0.20 * smoothed[i + 1].second
+                temp[i] = Pair(lat, lng)
+            }
+            smoothed = temp
+        }
+
+        return smoothed.map { listOf(safeRound(it.first, 5), safeRound(it.second, 5)) }
+    }
+
+    fun calculateTrackCourse(history: List<Pair<Double, Double>>, prevCourse: Double? = null): Double {
+        val n = history.size
+        if (n < 2) return prevCourse ?: 0.0
+
+        if (n == 2) {
+            val p0 = history[0]
+            val p1 = history[1]
+            val d = haversineKm(p0.first, p0.second, p1.first, p1.second)
+            if (d < 0.15 && prevCourse != null) return prevCourse
+            val b = calculateBearing(p0.first, p0.second, p1.first, p1.second)
+            if (prevCourse != null) {
+                val diff = (b - prevCourse + 180.0) % 360.0 - 180.0
+                val clamped = max(-40.0, min(40.0, diff))
+                return (prevCourse + clamped + 360.0) % 360.0
+            }
+            return b
+        }
+
+        val weights = doubleArrayOf(0.55, 0.30, 0.15)
+        var vxSum = 0.0
+        var vySum = 0.0
+        var weightAcc = 0.0
+        var segIdx = 0
+
+        for (i in n - 1 downTo 1) {
+            if (segIdx >= weights.size) break
+            val pCurr = history[i]
+            val pPrev = history[i - 1]
+            val dKm = haversineKm(pPrev.first, pPrev.second, pCurr.first, pCurr.second)
+            if (dKm < 0.08) continue
+
+            val bRad = Math.toRadians(calculateBearing(pPrev.first, pPrev.second, pCurr.first, pCurr.second))
+            val w = weights[segIdx]
+            vxSum += w * sin(bRad)
+            vySum += w * cos(bRad)
+            weightAcc += w
+            segIdx++
+        }
+
+        if (weightAcc < 0.1) return prevCourse ?: 0.0
+
+        val rawCourse = (Math.toDegrees(atan2(vxSum, vySum)) + 360.0) % 360.0
+        val finalCourse = if (prevCourse != null) {
+            val diff = (rawCourse - prevCourse + 180.0) % 360.0 - 180.0
+            val clamped = max(-30.0, min(30.0, diff))
+            (prevCourse + clamped + 360.0) % 360.0
+        } else {
+            rawCourse
+        }
+
+        return safeRound(finalCourse, 0)
+    }
+
+    fun classifyTarget(
+        avgSpeed: Double?,
+        sampleCount: Int,
+        maxSpeed: Double? = null,
+        obsSec: Double = 0.0
+    ): ClassificationResult {
+        if (sampleCount < 2 || avgSpeed == null) {
+            return ClassificationResult(
+                name = "Нова ціль (визначення...)",
+                sub = "Збір замірів для усунення коливань",
+                icon = "🎯",
+                iconName = "ic_air_threat_combined_white",
+                tag = "NEW",
+                echelon = "Визначається..."
+            )
+        }
+
+        if (avgSpeed < 50.0) {
+            return ClassificationResult(
+                name = "Стаціонарний сигнал / Завада",
+                sub = "Електромагнітна завада, гроза або фантом",
+                icon = "⚡",
+                iconName = "ic_drone",
+                tag = "STATIONARY",
+                echelon = "На поверхні"
+            )
+        }
+
+        val maxSpd = maxSpeed ?: avgSpeed
+        val isRealKab = (avgSpeed in 300.0..1200.0) && (obsSec <= 150.0) && (sampleCount >= 4 && maxSpd >= 580.0)
+
+        if (isRealKab) {
+            return if (avgSpeed < 550.0) {
+                ClassificationResult(
+                    name = "КАБ (УМПК) на зниженні",
+                    sub = "Планування/піке (${avgSpeed.toInt()} км/год)",
+                    icon = "💣",
+                    iconName = "ic_airbomb",
+                    tag = "KAB",
+                    echelon = "Пікірування (4000м → 0м)"
+                )
+            } else {
+                ClassificationResult(
+                    name = "КАБ (УМПК) / Авіабомба",
+                    sub = "Швидкісний схід з висоти (${avgSpeed.toInt()} км/год)",
+                    icon = "💣",
+                    iconName = "ic_airbomb",
+                    tag = "KAB",
+                    echelon = "Висотний ешелон (6 000 – 10 000 м)"
+                )
+            }
+        }
+
+        return when {
+            avgSpeed < 135.0 -> ClassificationResult(
+                name = "БПЛА: Розвідник / «Молнія»",
+                sub = "Орлан / Zala / Supercam або «Молнія»",
+                icon = "🛸",
+                iconName = "ic_drone",
+                tag = "UAV",
+                echelon = "Тактичний оглядовий (1 000 – 2 500 м)"
+            )
+            avgSpeed < 250.0 -> ClassificationResult(
+                name = "Шахед / «Молнія» (піке)",
+                sub = "Shahed-136 або камікадзе",
+                icon = "🛩️",
+                iconName = "ic_shahed",
+                tag = "SHAHED",
+                echelon = "Бриючий ешелон (80 – 350 м)"
+            )
+            avgSpeed < 550.0 -> ClassificationResult(
+                name = "Реактивний БПЛА",
+                sub = "Shahed-238 або швидкісний дрон",
+                icon = "⚡",
+                iconName = "ic_shahed_jet",
+                tag = "JET",
+                echelon = "Середній ешелон (1 500 – 3 500 м)"
+            )
+            avgSpeed < 1200.0 -> ClassificationResult(
+                name = "Крилата ракета / Швидкісна ціль",
+                sub = "Бандероль (S8000) / Х-101 / Калібр",
+                icon = "🚀",
+                iconName = "ic_missile",
+                tag = "MISSILE",
+                echelon = "Наднизький ешелон (40 – 120 м)"
+            )
+            else -> ClassificationResult(
+                name = "Балістика / Надзвукова",
+                sub = "Аеробалістика або гіперзвук",
+                icon = "💥",
+                iconName = "ic_ballistic",
+                tag = "BALLISTIC",
+                echelon = "Стратосфера (15+ км) → круте піке"
+            )
+        }
+    }
+
     /**
      * Assesses targets relative to the user's pinned location.
      * Sets kinematic fields on targets and partitions them into Critical and Sector threats.
@@ -76,7 +275,6 @@ object ThreatAnalyzer {
 
             if (course != null) {
                 val angleDiff = abs((course - bearingToUser + 180.0) % 360.0 - 180.0)
-                // Heading toward user if track direction aligns within 45 degrees of bearing to user
                 isHeadingToUser = angleDiff <= 45.0
 
                 val speedKmh = target.avgSpeedKmh ?: target.instantSpeedKmh ?: 180.0
@@ -89,21 +287,15 @@ object ThreatAnalyzer {
             target.isHeadingToUser = isHeadingToUser
             target.timeToUserMin = etaMin
 
-            // 1. Critical Channel:
-            // Threat within critical radius AND heading towards user (or very close <= 12 km regardless of heading)
-            val isHighThreatType = target.iconName in listOf("ic_shahed", "ic_shahed_jet", "ic_airbomb", "ic_missile", "ic_ballistic")
             val isImminentProximity = dist <= 12.0
 
             if (settings.criticalEnabled && dist <= critRadius && (isHeadingToUser || isImminentProximity)) {
                 criticalList.add(target)
             } else if (settings.sectorEnabled && dist <= sectRadius) {
-                // 2. Sector Awareness Channel:
-                // Within observation sector, but not meeting immediate critical alarm criteria
                 sectorList.add(target)
             }
         }
 
-        // Build brief summary string for UI or notification
         val summary = when {
             criticalList.isNotEmpty() -> {
                 val closest = criticalList.minByOrNull { it.distanceKm ?: 999.0 }

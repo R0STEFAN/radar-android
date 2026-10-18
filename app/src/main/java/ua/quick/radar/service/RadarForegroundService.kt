@@ -288,8 +288,8 @@ class RadarForegroundService : Service() {
                     // Ignore transient network hiccups and retry
                 }
 
-                // Poll every 5 seconds for responsive threat reaction
-                delay(5000)
+                // Poll every 20 seconds matching Fluger server update frequency
+                delay(20000)
             }
         }
     }
@@ -300,37 +300,101 @@ class RadarForegroundService : Service() {
     ): List<RadarTarget> {
         val fused = mutableListOf<RadarTarget>()
         val matchedUa = mutableSetOf<String>()
+        val matchedFluger = mutableSetOf<String>()
+
+        data class FusionCandidate(
+            val score: Double,
+            val flugerTarget: RadarTarget,
+            val uaTarget: RadarTarget,
+            val distBetween: Double
+        )
+
+        val candidates = mutableListOf<FusionCandidate>()
 
         for (ft in flugerList) {
-            val match = uaList.find { ut ->
-                !matchedUa.contains(ut.trackId) &&
-                ThreatAnalyzer.haversineKm(ft.lat, ft.lng, ut.lat, ut.lng) <= 15.0
+            for (ut in uaList) {
+                val dBetween = ThreatAnalyzer.haversineKm(ft.lat, ft.lng, ut.lat, ut.lng)
+                if (dBetween > 16.0) continue
+
+                val ftCourse = ft.courseDeg
+                val utCourse = ut.courseDeg
+
+                var cDiff = 0.0
+                var courseCompatible = true
+                if (ftCourse != null && utCourse != null && (ut.path.size >= 2 || ut.courseDeg != null)) {
+                    cDiff = abs((ftCourse - utCourse + 180.0) % 360.0 - 180.0)
+                    if (cDiff > 70.0) {
+                        courseCompatible = false
+                    }
+                }
+
+                if (!courseCompatible) continue
+
+                val score = dBetween * 1.0 + (cDiff / 15.0)
+                candidates.add(FusionCandidate(score, ft, ut, dBetween))
+            }
+        }
+
+        candidates.sortBy { it.score }
+
+        for (cand in candidates) {
+            val ft = cand.flugerTarget
+            val ut = cand.uaTarget
+            if (matchedFluger.contains(ft.trackId) || matchedUa.contains(ut.trackId)) {
+                continue
+            }
+            matchedFluger.add(ft.trackId)
+            matchedUa.add(ut.trackId)
+
+            val fusedLat = ThreatAnalyzer.safeRound(ft.lat * 0.5 + ut.lat * 0.5, 5)
+            val fusedLng = ThreatAnalyzer.safeRound(ft.lng * 0.5 + ut.lng * 0.5, 5)
+
+            val fusedSpeed = ut.avgSpeedKmh ?: ft.avgSpeedKmh ?: ut.instantSpeedKmh ?: ft.instantSpeedKmh
+            val speedText = if (fusedSpeed != null && fusedSpeed > 20) " (${fusedSpeed.toInt()} км/год)" else ""
+
+            val combinedPath = if (ft.path.size >= ut.path.size && ft.path.isNotEmpty()) {
+                val p = ft.path.toMutableList()
+                p[p.size - 1] = listOf(fusedLat, fusedLng)
+                p
+            } else if (ut.path.isNotEmpty()) {
+                val p = ut.path.toMutableList()
+                p[p.size - 1] = listOf(fusedLat, fusedLng)
+                p
+            } else {
+                listOf(listOf(fusedLat, fusedLng))
             }
 
-            if (match != null) {
-                matchedUa.add(match.trackId)
-                fused.add(
-                    ft.copy(
-                        category = match.category,
-                        sub = "${match.sub} • Підтверджено двома сенсорами",
-                        iconName = match.iconName,
-                        tag = match.tag,
-                        courseDeg = match.courseDeg ?: ft.courseDeg,
-                        courseName = match.courseName ?: ft.courseName,
-                        avgSpeedKmh = match.avgSpeedKmh ?: ft.avgSpeedKmh,
-                        instantSpeedKmh = match.instantSpeedKmh ?: ft.instantSpeedKmh,
-                        path = if (match.path.isNotEmpty()) match.path else ft.path,
-                        count = match.count,
-                        isFused = true,
-                        sourceLabel = "⚡ Флюгер + Мінцифра (Підтверджено)"
-                    )
+            fused.add(
+                RadarTarget(
+                    trackId = ft.trackId,
+                    lat = fusedLat,
+                    lng = fusedLng,
+                    courseDeg = ut.courseDeg ?: ft.courseDeg,
+                    courseName = ut.courseName ?: ft.courseName,
+                    category = ut.category,
+                    sub = "${ut.sub} • Радар Флюгер$speedText",
+                    iconName = ut.iconName,
+                    tag = ut.tag,
+                    echelon = if (ut.echelon != "Невідомо") ut.echelon else ft.echelon,
+                    avgSpeedKmh = ft.avgSpeedKmh ?: ut.avgSpeedKmh,
+                    instantSpeedKmh = ft.instantSpeedKmh ?: ut.instantSpeedKmh,
+                    path = combinedPath,
+                    count = max(ft.count, ut.count),
+                    isFused = true,
+                    source = "fused",
+                    sourceLabel = "⚡ Флюгер + Мінцифра (Підтверджено)"
                 )
-            } else {
+            )
+        }
+
+        // Add remaining unmatched Fluger targets
+        for (ft in flugerList) {
+            if (!matchedFluger.contains(ft.trackId)) {
                 fused.add(ft)
             }
         }
 
-        // Add remaining non-fused targets from UkraineAlarm
+        // Add remaining unmatched UkraineAlarm targets
         for (ut in uaList) {
             if (!matchedUa.contains(ut.trackId)) {
                 fused.add(ut)

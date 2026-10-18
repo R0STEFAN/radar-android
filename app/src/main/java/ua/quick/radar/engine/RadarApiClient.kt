@@ -7,6 +7,7 @@ import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -20,6 +21,23 @@ class RadarApiClient {
         .build()
 
     private val gson = Gson()
+
+    // Persistent multi-sweep track storage (matching fluger_server.py)
+    data class InternalTrack(
+        val trackId: Int,
+        var lat: Double,
+        var lng: Double,
+        var lastTimeSec: Double,
+        val history: MutableList<Pair<Double, Double>> = mutableListOf(),
+        val timestamps: MutableList<Double> = mutableListOf(),
+        var course: Double? = null,
+        var avgSpeed: Double? = null,
+        var instantSpeed: Double? = null,
+        var maxSpeed: Double = 0.0
+    )
+
+    private val activeTracks = ConcurrentHashMap<Int, InternalTrack>()
+    private var nextTrackId = 1
 
     fun generateFibonacciKey(source: String): String {
         val fib = mutableListOf(0, 1)
@@ -135,6 +153,7 @@ class RadarApiClient {
 
     /**
      * Triangulates targets from radar azimuths using 2 probe points (lat,lng) and (lat + 0.08, lng)
+     * and performs kinematic cone tracking to calculate speeds, trajectories, and classifications.
      */
     fun fetchFlugerTriangulatedTargets(lat: Double, lng: Double): List<RadarTarget> {
         val r0 = fetchRawRadarData(lat, lng) ?: return emptyList()
@@ -173,8 +192,7 @@ class RadarApiClient {
             }
         }
 
-        val targets = mutableListOf<RadarTarget>()
-        var trackIdx = 1
+        val rawDetectedPoints = mutableListOf<Pair<Double, Double>>()
 
         if (obs1.isNotEmpty()) {
             for (t0 in obs0) {
@@ -184,61 +202,137 @@ class RadarApiClient {
                     val dist1 = ThreatAnalyzer.haversineKm(lat2, lng2, tLat, tLng)
 
                     if (dist0 in t0.minKm..t0.maxKm && dist1 in t1.minKm..t1.maxKm) {
-                        targets.add(
-                            RadarTarget(
-                                trackId = "flg_$trackIdx",
-                                lat = ThreatAnalyzer.safeRound(tLat, 5),
-                                lng = ThreatAnalyzer.safeRound(tLng, 5),
-                                courseDeg = null,
-                                courseName = null,
-                                category = "Повітряна ціль (Флюгер)",
-                                sub = "Тріангуляція радіопроменів",
-                                iconName = "ic_air_threat_combined_white",
-                                tag = "FLUGER",
-                                source = "fluger",
-                                sourceLabel = "Радар Флюгер"
-                            )
-                        )
-                        trackIdx++
+                        rawDetectedPoints.add(Pair(tLat, tLng))
                     }
                 }
             }
         }
 
-        // If no triangulation intersection succeeded (e.g. single observation), estimate point along azimuth midpoint
-        if (targets.isEmpty()) {
+        if (rawDetectedPoints.isEmpty()) {
             for (obs in obs0) {
                 val midDistMeters = ((obs.minKm + obs.maxKm) / 2.0) * 1000.0
-                val r = 6371e3
-                val d = midDistMeters / r
-                val brng = Math.toRadians(obs.azimuth)
-                val lat1 = Math.toRadians(lat)
-                val lon1 = Math.toRadians(lng)
-
-                val latEst = asin(sin(lat1) * cos(d) + cos(lat1) * sin(d) * cos(brng))
-                val lonEst = lon1 + atan2(sin(brng) * sin(d) * cos(lat1), cos(d) - sin(lat1) * sin(latEst))
-                val degLat = Math.toDegrees(latEst)
-                val degLon = (Math.toDegrees(lonEst) + 540.0) % 360.0 - 180.0
-
-                targets.add(
-                    RadarTarget(
-                        trackId = "flg_est_$trackIdx",
-                        lat = ThreatAnalyzer.safeRound(degLat, 5),
-                        lng = ThreatAnalyzer.safeRound(degLon, 5),
-                        courseDeg = null,
-                        courseName = null,
-                        category = "Повітряна ціль",
-                        sub = "Сектор ${obs.azimuth.toInt()}° (${obs.minKm.toInt()}-${obs.maxKm.toInt()} км)",
-                        iconName = "ic_air_threat_combined_white",
-                        tag = "FLUGER",
-                        source = "fluger",
-                        sourceLabel = "Радар Флюгер"
-                    )
-                )
-                trackIdx++
+                val est = ThreatAnalyzer.getDestinationPoint(lat, lng, midDistMeters, obs.azimuth)
+                rawDetectedPoints.add(est)
             }
         }
 
-        return targets
+        val nowSec = System.currentTimeMillis() / 1000.0
+        // Clean stale tracks > 360 seconds
+        activeTracks.entries.removeIf { nowSec - it.value.lastTimeSec > 360.0 }
+
+        val resultTargets = mutableListOf<RadarTarget>()
+        val usedTracks = mutableSetOf<Int>()
+
+        for (pt in rawDetectedPoints) {
+            val pLat = pt.first
+            val pLng = pt.second
+
+            // Find closest candidate track within kinematic range
+            var bestTrack: InternalTrack? = null
+            var bestDist = Double.MAX_VALUE
+
+            for ((tid, tr) in activeTracks) {
+                if (usedTracks.contains(tid)) continue
+                val dt = max(1.0, nowSec - tr.lastTimeSec)
+                val knownSpd = tr.avgSpeed ?: tr.instantSpeed ?: 300.0
+                val speedCap = max(knownSpd * 1.35, 1100.0)
+                val maxAllowedDist = max(3.0, min(55.0, (speedCap / 3600.0) * dt + 4.0))
+
+                val dRaw = ThreatAnalyzer.haversineKm(tr.lat, tr.lng, pLat, pLng)
+                if (dRaw <= maxAllowedDist && dRaw < bestDist) {
+                    bestDist = dRaw
+                    bestTrack = tr
+                }
+            }
+
+            val track = if (bestTrack != null) {
+                usedTracks.add(bestTrack.trackId)
+                bestTrack
+            } else {
+                val newId = nextTrackId++
+                val newTr = InternalTrack(newId, pLat, pLng, nowSec)
+                activeTracks[newId] = newTr
+                newTr
+            }
+
+            track.lat = pLat
+            track.lng = pLng
+            track.lastTimeSec = nowSec
+
+            val lastSample = track.history.lastOrNull()
+            if (lastSample == null || (nowSec - (track.timestamps.lastOrNull() ?: 0.0) >= 3.0) ||
+                ThreatAnalyzer.haversineKm(lastSample.first, lastSample.second, pLat, pLng) > 0.04
+            ) {
+                track.history.add(Pair(pLat, pLng))
+                track.timestamps.add(nowSec)
+                if (track.history.size > 200) {
+                    track.history.removeAt(0)
+                    track.timestamps.removeAt(0)
+                }
+            }
+
+            val hist = track.history
+            val sampleCount = hist.size
+            val firstTime = track.timestamps.firstOrNull() ?: nowSec
+            val totalDt = max(1.0, nowSec - firstTime)
+
+            var avgSpd: Double? = null
+            var instSpd: Double? = null
+
+            if (sampleCount >= 2) {
+                val firstP = hist.first()
+                val lastP = hist.last()
+                val netDist = ThreatAnalyzer.haversineKm(firstP.first, firstP.second, lastP.first, lastP.second)
+                val prevP = hist[sampleCount - 2]
+                val prevTime = track.timestamps[sampleCount - 2]
+                val stepDt = max(1.0, nowSec - prevTime)
+                val stepD = ThreatAnalyzer.haversineKm(prevP.first, prevP.second, lastP.first, lastP.second)
+
+                if (stepDt >= 2.0 && stepD >= 0.04) {
+                    instSpd = ThreatAnalyzer.safeRound((stepD / stepDt) * 3600.0, 0)
+                }
+                if (totalDt >= 6.0 && netDist >= 0.08) {
+                    avgSpd = ThreatAnalyzer.safeRound((netDist / totalDt) * 3600.0, 0)
+                }
+            }
+
+            track.avgSpeed = avgSpd
+            track.instantSpeed = instSpd
+            track.maxSpeed = max(track.maxSpeed, max(avgSpd ?: 0.0, instSpd ?: 0.0))
+
+            val course = ThreatAnalyzer.calculateTrackCourse(hist, track.course)
+            track.course = course
+            val courseCompass = ThreatAnalyzer.bearingToCompass(course)
+            val smoothedPath = ThreatAnalyzer.smoothTrajectory(hist)
+
+            val classification = ThreatAnalyzer.classifyTarget(
+                avgSpeed = avgSpd ?: instSpd,
+                sampleCount = sampleCount,
+                maxSpeed = track.maxSpeed,
+                obsSec = totalDt
+            )
+
+            resultTargets.add(
+                RadarTarget(
+                    trackId = "flg_${track.trackId}",
+                    lat = ThreatAnalyzer.safeRound(pLat, 5),
+                    lng = ThreatAnalyzer.safeRound(pLng, 5),
+                    courseDeg = ThreatAnalyzer.safeRound(course, 0),
+                    courseName = courseCompass,
+                    category = classification.name,
+                    sub = classification.sub,
+                    iconName = classification.iconName,
+                    tag = classification.tag,
+                    echelon = classification.echelon,
+                    avgSpeedKmh = avgSpd,
+                    instantSpeedKmh = instSpd,
+                    source = "fluger",
+                    sourceLabel = "Радар Флюгер",
+                    path = smoothedPath
+                )
+            )
+        }
+
+        return resultTargets
     }
 }

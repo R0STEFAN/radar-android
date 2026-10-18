@@ -593,8 +593,12 @@
       animation: pulse-ring 2s infinite ease-out;
     }
 
-    /* Threat Marker Styles */
-    .threat-leaflet-marker {
+    /* Tactical Target Marker Styles */
+    .custom-target-marker-box {
+      background: transparent;
+      border: none;
+    }
+    .custom-target-marker {
       position: relative;
       width: 44px;
       height: 44px;
@@ -602,18 +606,60 @@
       align-items: center;
       justify-content: center;
     }
-    .threat-icon-rotator {
+    .marker-icon-box {
+      position: relative;
+      z-index: 5;
       width: 32px;
       height: 32px;
+      background: #070a12;
+      border: 2px solid #ffffff;
+      border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: transform 0.5s ease;
+      box-shadow: 0 0 12px #ef4444;
+      transition: transform 0.2s ease, border-color 0.2s ease;
     }
-    .threat-icon-rotator img {
-      width: 28px;
-      height: 28px;
-      filter: drop-shadow(0 2px 5px rgba(0,0,0,0.8));
+    .marker-icon-box img {
+      width: 22px;
+      height: 22px;
+      display: block;
+      pointer-events: none;
+      filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.4));
+    }
+    .marker-ping-wave {
+      position: absolute;
+      width: 36px;
+      height: 36px;
+      border: 2px solid #ef4444;
+      border-radius: 50%;
+      animation: ping 1.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+    }
+    @keyframes ping {
+      0% { transform: scale(0.6); opacity: 1; }
+      100% { transform: scale(2.4); opacity: 0; }
+    }
+    .course-pointer-wrap {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 44px;
+      height: 44px;
+      pointer-events: none;
+      z-index: 6;
+      transition: transform 0.4s ease;
+    }
+    .course-arrow-head {
+      position: absolute;
+      top: -3px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-bottom: 12px solid #fde047;
+      filter: drop-shadow(0 0 5px #eab308);
     }
     .threat-tag {
       position: absolute;
@@ -626,13 +672,30 @@
       color: #fff;
       padding: 1px 4px;
       white-space: nowrap;
+      z-index: 10;
     }
-    .threat-warning-halo {
-      position: absolute;
-      top: -2px; left: -2px; width: 48px; height: 48px;
-      border-radius: 50%;
-      border: 2px dashed var(--red-alert);
-      animation: halo-rotate 4s infinite linear;
+    .marker-icon-box.fused-target {
+      border: 2.5px dashed #38bdf8 !important;
+      outline: 2px dashed #facc15 !important;
+      outline-offset: 2px !important;
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.95), 0 0 24px rgba(250, 204, 21, 0.9) !important;
+      animation: fused-pulse-glow 2.4s infinite ease-in-out !important;
+    }
+    .marker-ping-wave.fused-target {
+      border: 2px dashed #facc15 !important;
+      box-shadow: 0 0 16px #38bdf8 !important;
+    }
+    @keyframes fused-pulse-glow {
+      0%, 100% {
+        border-color: #38bdf8 !important;
+        outline-color: #facc15 !important;
+        box-shadow: 0 0 14px rgba(56, 189, 248, 0.9), 0 0 22px rgba(250, 204, 21, 0.9) !important;
+      }
+      50% {
+        border-color: #facc15 !important;
+        outline-color: #38bdf8 !important;
+        box-shadow: 0 0 22px rgba(250, 204, 21, 0.95), 0 0 30px rgba(56, 189, 248, 0.95) !important;
+      }
     }
 
     @keyframes ripple {
@@ -915,6 +978,7 @@
   </div>
 
   <script src="vendor/leaflet.js"></script>
+  <script src="embedded_icons.js"></script>
   <script>
     // --- State & Settings ---
     let appSettings = {
@@ -940,11 +1004,11 @@
     let criticalCircle = null;
     let sectorCircle = null;
     let targetMarkers = {};
-    let targetPolylines = {};
+    let targetLayers = {};
     let isPinModeActive = false;
 
     // Timer countdown
-    let secondsToRefresh = 5;
+    let secondsToRefresh = 20;
     let countdownInterval = null;
 
     // --- Bridge Call Helper ---
@@ -955,6 +1019,33 @@
       return null;
     }
 
+    // --- Vector Icon & Kinematics Helpers ---
+    function getIconSrc(name) {
+      if (!name) return (typeof EMBEDDED_ICONS !== 'undefined' ? EMBEDDED_ICONS['ic_air_threat_combined_white'] : 'icons/ic_air_threat_combined_white.svg');
+      const clean = String(name).replace(/\.svg$/i, "").trim().toLowerCase();
+      if (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS[clean]) return EMBEDDED_ICONS[clean];
+      if (clean.includes("bomb") || clean.includes("kab") || clean.includes("каб")) return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_airbomb"]) ? EMBEDDED_ICONS["ic_airbomb"] : "icons/ic_airbomb.svg";
+      if (clean.includes("jet") || clean.includes("реакт")) return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_shahed_jet"]) ? EMBEDDED_ICONS["ic_shahed_jet"] : "icons/ic_shahed_jet.svg";
+      if (clean.includes("shahed") || clean.includes("шахед") || clean.includes("дрон")) return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_shahed"]) ? EMBEDDED_ICONS["ic_shahed"] : "icons/ic_shahed.svg";
+      if (clean.includes("missile") || clean.includes("ракета")) return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_missile"]) ? EMBEDDED_ICONS["ic_missile"] : "icons/ic_missile.svg";
+      if (clean.includes("ballistic") || clean.includes("баліст")) return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_ballistic"]) ? EMBEDDED_ICONS["ic_ballistic"] : "icons/ic_ballistic.svg";
+      if (clean.includes("drone") || clean.includes("розвід")) return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_drone"]) ? EMBEDDED_ICONS["ic_drone"] : "icons/ic_drone.svg";
+      return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_air_threat_combined_white"]) ? EMBEDDED_ICONS["ic_air_threat_combined_white"] : "icons/ic_air_threat_combined_white.svg";
+    }
+
+    function getDestinationPoint(lat, lng, distMeters, bearingDeg) {
+      const R = 6371e3;
+      const d = distMeters / R;
+      const brng = (bearingDeg * Math.PI) / 180;
+      const lat1 = (lat * Math.PI) / 180;
+      const lon1 = (lng * Math.PI) / 180;
+
+      const lat2 = Math.asin(Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brng));
+      const lon2 = lon1 + Math.atan2(Math.sin(brng) * Math.sin(d) * Math.cos(lat1), Math.cos(d) - Math.sin(lat1) * Math.sin(lat2));
+
+      return [(lat2 * 180) / Math.PI, (((lon2 * 180) / Math.PI) + 540) % 360 - 180];
+    }
+
     // --- Init ---
     window.addEventListener("DOMContentLoaded", () => {
       loadSettingsFromNative();
@@ -962,6 +1053,7 @@
       renderUserPosition();
       updateRadarData();
       startTimerCountdown();
+      initBottomSheetGestures();
     });
 
     function loadSettingsFromNative() {
@@ -1042,27 +1134,31 @@
       document.getElementById("labelSectorVolume").textContent = `${val}%`;
     }
 
-    // --- Countdown Timer ---
+    // --- Countdown Timer (20 seconds cadence) ---
     function startTimerCountdown() {
       if (countdownInterval) clearInterval(countdownInterval);
-      secondsToRefresh = 5;
+      secondsToRefresh = 20;
 
       countdownInterval = setInterval(() => {
         secondsToRefresh--;
         if (secondsToRefresh <= 0) {
-          secondsToRefresh = 5;
+          secondsToRefresh = 20;
           updateRadarData();
         }
-        document.getElementById("countdownTimer").textContent = `${secondsToRefresh} с`;
-        const pct = (secondsToRefresh / 5.0) * 100;
-        document.getElementById("timerProgressFill").style.width = `${pct}%`;
+        const timerEl = document.getElementById("countdownTimer");
+        if (timerEl) timerEl.textContent = `${secondsToRefresh} с`;
+        const pct = (secondsToRefresh / 20.0) * 100;
+        const fillEl = document.getElementById("timerProgressFill");
+        if (fillEl) fillEl.style.width = `${pct}%`;
       }, 1000);
     }
 
     function triggerManualRefresh() {
-      secondsToRefresh = 5;
-      document.getElementById("countdownTimer").textContent = `5 с`;
-      document.getElementById("timerProgressFill").style.width = `100%`;
+      secondsToRefresh = 20;
+      const timerEl = document.getElementById("countdownTimer");
+      if (timerEl) timerEl.textContent = `20 с`;
+      const fillEl = document.getElementById("timerProgressFill");
+      if (fillEl) fillEl.style.width = `100%`;
       updateRadarData();
       callBridge("showToast", "Оновлення даних...");
     }
@@ -1271,17 +1367,14 @@
       if (!map) return;
 
       const currentIds = new Set(targets.map(t => t.trackId));
+      const userLat = appSettings.pinnedLat;
+      const userLng = appSettings.pinnedLng;
 
-      for (const id in targetMarkers) {
+      for (const id in targetLayers) {
         if (!currentIds.has(id)) {
-          map.removeLayer(targetMarkers[id]);
+          map.removeLayer(targetLayers[id]);
+          delete targetLayers[id];
           delete targetMarkers[id];
-        }
-      }
-      for (const id in targetPolylines) {
-        if (!currentIds.has(id)) {
-          map.removeLayer(targetPolylines[id]);
-          delete targetPolylines[id];
         }
       }
 
@@ -1291,59 +1384,126 @@
         const lng = t.lng;
         const course = t.courseDeg || 0;
         const isHeading = t.isHeadingToUser;
+        const isFused = !!t.isFused;
         const iconName = t.iconName || "ic_air_threat_combined_white";
 
-        const iconHtml = `
-          <div class="threat-leaflet-marker">
-            ${isHeading ? '<div class="threat-warning-halo"></div>' : ''}
-            <div class="threat-icon-rotator" style="transform: rotate(${course}deg);">
-              <img src="icons/${iconName}.svg" alt="threat" />
+        if (targetLayers[id]) {
+          map.removeLayer(targetLayers[id]);
+          delete targetLayers[id];
+          delete targetMarkers[id];
+        }
+
+        const group = L.layerGroup().addTo(map);
+        targetLayers[id] = group;
+
+        // 1. Line from User to Target
+        const lineColor = isHeading ? '#dc2626' : (t.distanceKm <= appSettings.criticalRadiusKm ? '#ef4444' : (t.source === 'ukrainealarm' ? '#38bdf8' : '#f59e0b'));
+        const userLine = L.polyline([[userLat, userLng], [lat, lng]], {
+          color: lineColor,
+          weight: isHeading ? 2.5 : 1.2,
+          opacity: isHeading ? 0.9 : 0.45,
+          dashArray: isHeading ? '6, 4' : '4, 6',
+          interactive: false
+        });
+        group.addLayer(userLine);
+
+        // 2. Breadcrumb Historical Flight Path
+        if (t.path && t.path.length >= 2) {
+          const trailColor = isHeading ? '#dc2626' : (t.source === 'ukrainealarm' ? '#38bdf8' : '#f97316');
+          const trail = L.polyline(t.path, {
+            color: trailColor,
+            weight: 3.5,
+            opacity: 0.85,
+            interactive: false
+          });
+          group.addLayer(trail);
+
+          t.path.forEach(pt => {
+            const dot = L.circleMarker(pt, {
+              radius: 3,
+              color: trailColor,
+              fillColor: '#ffffff',
+              fillOpacity: 0.9,
+              weight: 1.5,
+              interactive: false
+            });
+            group.addLayer(dot);
+          });
+        }
+
+        // 3. 1-minute forward flight vector (projected course)
+        if (t.courseDeg !== null && t.courseDeg !== undefined && !t.isStagnant) {
+          const speed = t.avgSpeedKmh || t.instantSpeedKmh || 220;
+          const forwardDistMeters = (speed * 1000.0 / 3600.0) * 60.0;
+          const fwdPt = getDestinationPoint(lat, lng, forwardDistMeters, t.courseDeg);
+          const fwdVector = L.polyline([[lat, lng], fwdPt], {
+            color: isHeading ? '#ef4444' : '#facc15',
+            weight: isHeading ? 3 : 2,
+            opacity: 0.9,
+            dashArray: '3, 4',
+            interactive: false
+          });
+          group.addLayer(fwdVector);
+        }
+
+        // 4. Tactical Target Marker with SVG icon & heading arrow
+        const markerBorderColor = isHeading ? '#dc2626' : (t.distanceKm <= appSettings.criticalRadiusKm ? '#ef4444' : (isFused ? '#38bdf8' : (t.source === 'ukrainealarm' ? '#38bdf8' : '#f59e0b')));
+        const distText = t.distanceKm ? `${t.distanceKm.toFixed(0)} км` : '';
+        const fusedClass = isFused ? 'fused-target' : '';
+
+        const markerHtml = `
+          <div class="custom-target-marker">
+            <div class="marker-ping-wave ${fusedClass}" style="${!isFused ? 'border-color:' + markerBorderColor + ';' : ''}"></div>
+            <div class="course-pointer-wrap" style="transform: rotate(${course}deg);">
+              <div class="course-arrow-head" style="border-bottom-color:${isHeading ? '#ef4444' : '#fde047'}; filter: drop-shadow(0 0 5px ${isHeading ? '#ef4444' : '#eab308'});"></div>
             </div>
-            <div class="threat-tag" style="${isHeading ? 'border-color: #ef4444; color: #ff9999;' : ''}">
-              ${t.distanceKm ? t.distanceKm.toFixed(0) + ' км' : ''}
+            <div class="marker-icon-box ${fusedClass}" style="${!isFused ? 'border-color:' + markerBorderColor + '; box-shadow:0 0 14px ' + markerBorderColor + ';' : ''}">
+              <img src="${getIconSrc(iconName)}" style="transform: rotate(${course}deg);" alt="${t.category}" />
             </div>
+            ${distText ? `<div class="threat-tag" style="${isHeading ? 'border-color: #ef4444; color: #ff9999;' : ''}">${distText}</div>` : ''}
           </div>
         `;
 
-        const threatIcon = L.divIcon({
-          className: "custom-threat-div",
-          html: iconHtml,
-          iconSize: [44, 44],
-          iconAnchor: [22, 22]
+        const marker = L.marker([lat, lng], {
+          icon: L.divIcon({
+            className: 'custom-target-marker-box',
+            html: markerHtml,
+            iconSize: [44, 44],
+            iconAnchor: [22, 22]
+          }),
+          zIndexOffset: 800
         });
 
-        if (targetMarkers[id]) {
-          targetMarkers[id].setLatLng([lat, lng]);
-          targetMarkers[id].setIcon(threatIcon);
-        } else {
-          const marker = L.marker([lat, lng], { icon: threatIcon, zIndexOffset: 800 }).addTo(map);
-          marker.bindPopup(`
-            <div style="font-size: 13px; line-height: 1.5; color: #111;">
-              <strong>${t.category}</strong><br/>
-              <span>Відстань: <b>${t.distanceKm ? t.distanceKm.toFixed(1) + ' км' : 'невідомо'}</b></span><br/>
-              <span>Курс: <b>${t.courseDeg !== null ? t.courseDeg + '° (' + (t.courseName || '') + ')' : 'невідомо'}</b></span><br/>
-              <span>Швидкість: <b>${t.avgSpeedKmh ? t.avgSpeedKmh + ' км/год' : (t.instantSpeedKmh ? t.instantSpeedKmh + ' км/год' : 'невідомо')}</b></span><br/>
-              ${isHeading ? '<span style="color: #dc2626; font-weight: 700;">🚨 КУРС ПРЯМО НА ВАС!</span><br/>' : ''}
-              <span style="font-size: 11px; color: #666;">${t.sub || t.sourceLabel}</span>
+        marker.bindPopup(`
+          <div style="font-size: 13px; line-height: 1.5; color: #0f172a; min-width: 230px;">
+            ${isHeading ? `
+              <div style="background:#fee2e2; border:1px solid #ef4444; color:#b91c1c; padding:6px 8px; border-radius:6px; font-weight:800; font-size:12px; margin-bottom:8px;">
+                🚨 УВАГА! ЦІЛЬ КУРСОМ НА ВАС!${t.timeToUserMin ? `<br><small style="font-weight:600; color:#991b1b;">Орієнтовний підліт: ~${Math.round(t.timeToUserMin)} хв</small>` : ''}
+              </div>` : ''}
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+              <div style="width:34px; height:34px; background:#0b0f19; border:2px solid ${markerBorderColor}; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                <img src="${getIconSrc(iconName)}" style="width:24px; height:24px; transform: rotate(${course}deg);" />
+              </div>
+              <div>
+                <div style="display:flex; align-items:center; gap:5px;">
+                  <b style="color:#ef4444; font-size:14px;">${t.category}</b>
+                  ${t.count && t.count > 1 ? `<span style="background:#ef4444; color:#fff; font-size:10px; font-weight:800; padding:1px 4px; border-radius:3px;">×${t.count}</span>` : ''}
+                </div>
+                <span style="font-size:11px; color:#64748b;">${t.sub || ''}</span>
+              </div>
             </div>
-          `);
-          targetMarkers[id] = marker;
-        }
+            <div style="background:#f1f5f9; padding:6px 8px; border-radius:6px; font-size:11px; margin-bottom:6px;">
+              <b>Джерело:</b> <span style="color:#0284c7;">${t.sourceLabel || (t.source === 'ukrainealarm' ? 'Мінцифра' : 'Флюгер')}</span><br>
+              <b>Швидкість:</b> <b style="color:#0284c7;">${t.avgSpeedKmh ? t.avgSpeedKmh + ' км/год' : (t.instantSpeedKmh ? t.instantSpeedKmh + ' км/год' : 'розраховується...')}</b><br>
+              <b>Курс:</b> ${t.courseDeg !== null ? t.courseDeg + '° (' + (t.courseName || '') + ')' : 'невідомо'}<br>
+              <b>Ешелон:</b> ${t.echelon || 'визначається...'}<br>
+              <b>Дистанція:</b> <b>${t.distanceKm ? t.distanceKm.toFixed(1) + ' км' : 'невідомо'}</b>
+            </div>
+          </div>
+        `);
 
-        if (t.path && t.path.length >= 2) {
-          const pathPoints = t.path.map(p => [p[0], p[1]]);
-          if (targetPolylines[id]) {
-            targetPolylines[id].setLatLngs(pathPoints);
-          } else {
-            const poly = L.polyline(pathPoints, {
-              color: isHeading ? "#ef4444" : "#f59e0b",
-              weight: isHeading ? 3 : 2,
-              opacity: 0.7,
-              dashArray: "4, 6"
-            }).addTo(map);
-            targetPolylines[id] = poly;
-          }
-        }
+        group.addLayer(marker);
+        targetMarkers[id] = marker;
       }
     }
 
@@ -1381,18 +1541,19 @@
           <div class="threat-card ${t.isHeadingToUser ? 'critical-threat' : ''}" onclick="focusTargetOnMap(${t.lat}, ${t.lng}, '${t.trackId}')">
             <div class="threat-card-left">
               <div class="threat-icon-box">
-                <img src="icons/${iconName}.svg" alt="icon" />
+                <img src="${getIconSrc(iconName)}" alt="icon" />
               </div>
               <div style="min-width: 0;">
                 <div class="threat-title-line">
                   <span>${t.category}</span>
+                  ${t.count && t.count > 1 ? `<span style="background:#ef4444; color:#fff; font-size:10px; font-weight:800; padding:1px 4px; border-radius:3px;">×${t.count}</span>` : ''}
                   ${t.isHeadingToUser ? '<span style="color:#ef4444; font-size:10px; font-weight:800;">🚨 НА ВАС!</span>' : ''}
                 </div>
                 <div class="threat-sub-line">
                   <span>Відстань: <b>${distText}</b></span> • <span>${courseText}</span>${etaText}
                 </div>
                 <div style="font-size: 10px; color: #64748b; margin-top: 2px;">
-                  ${t.sourceLabel || 'Радар'}
+                  ${t.sourceLabel || (t.source === 'ukrainealarm' ? '🛡️ Мінцифра' : '📡 Флюгер')}
                 </div>
               </div>
             </div>
@@ -1445,6 +1606,68 @@
       } else {
         sheet.classList.toggle("expanded");
       }
+    }
+
+    function initBottomSheetGestures() {
+      const sheet = document.getElementById("bottomSheet");
+      if (!sheet) return;
+
+      let startY = 0;
+      let currentY = 0;
+      let isTracking = false;
+
+      sheet.addEventListener("touchstart", (e) => {
+        if (e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        startY = touch.clientY;
+        currentY = startY;
+
+        const rect = sheet.getBoundingClientRect();
+        const touchYRelative = touch.clientY - rect.top;
+        const targetScrollable = e.target.closest(".sheet-scrollable");
+        const isAtTop = !targetScrollable || targetScrollable.scrollTop <= 0;
+
+        // Allow dragging from header (handle, tabs, top 100px) or when collapsed or scrolled to top
+        if (!sheet.classList.contains("expanded") || touchYRelative <= 100 || isAtTop) {
+          isTracking = true;
+        } else {
+          isTracking = false;
+        }
+      }, { passive: true });
+
+      sheet.addEventListener("touchmove", (e) => {
+        if (!isTracking) return;
+        const touch = e.touches[0];
+        currentY = touch.clientY;
+        const diffY = currentY - startY;
+
+        const targetScrollable = e.target.closest(".sheet-scrollable");
+        if (sheet.classList.contains("expanded")) {
+          // If pulling down inside scrollable, only proceed if scrollTop <= 0
+          if (targetScrollable && targetScrollable.scrollTop > 5 && diffY > 0) {
+            isTracking = false;
+          }
+        }
+      }, { passive: true });
+
+      sheet.addEventListener("touchend", () => {
+        if (!isTracking) return;
+        const diffY = currentY - startY;
+        const threshold = 35; // 35px threshold for quick responsive swipe
+
+        if (!sheet.classList.contains("expanded")) {
+          // Swiped UP -> expand bottom sheet
+          if (diffY < -threshold) {
+            toggleBottomSheet(true);
+          }
+        } else {
+          // Swiped DOWN -> collapse bottom sheet
+          if (diffY > threshold) {
+            toggleBottomSheet(false);
+          }
+        }
+        isTracking = false;
+      }, { passive: true });
     }
 
     function switchSheetTab(tab) {

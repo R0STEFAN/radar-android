@@ -25,23 +25,25 @@ class UkraineAlarmClient {
     private val trackHistories = ConcurrentHashMap<String, TrackHistory>()
 
     companion object {
-        private const val UA_NORTH = 52.5
-        private const val UA_SOUTH = 44.0
-        private const val UA_WEST = 22.0
-        private const val UA_EAST = 40.5
-        private const val VIEWBOX_WIDTH = 1200.0
-        private const val VIEWBOX_HEIGHT = 800.0
+        private const val UA_ALARM_VIEWBOX_WIDTH = 260.0
+        private const val UA_ALARM_VIEWBOX_HEIGHT = 175.0
+        private const val UA_ALARM_WEST = 22.137059
+        private const val UA_ALARM_EAST = 40.2275801
+        private const val UA_ALARM_SOUTH = 44.184598
+        private const val UA_ALARM_NORTH = 52.3791473
 
-        fun normalizedToLngLat(mapX: Double, mapY: Double): Pair<Double, Double> {
-            val mercN = ln(tan(Math.PI / 4.0 + (UA_NORTH * Math.PI / 180.0) / 2.0))
-            val mercS = ln(tan(Math.PI / 4.0 + (UA_SOUTH * Math.PI / 180.0) / 2.0))
+        fun normalizedToLngLat(x: Double, y: Double): Pair<Double, Double> {
+            val mapX = x * UA_ALARM_VIEWBOX_WIDTH
+            val mapY = y * UA_ALARM_VIEWBOX_HEIGHT
+            val projW = (UA_ALARM_EAST - UA_ALARM_WEST) * Math.PI / 180.0
+            val mercN = ln(tan(Math.PI / 4.0 + (UA_ALARM_NORTH * Math.PI / 180.0) / 2.0))
+            val mercS = ln(tan(Math.PI / 4.0 + (UA_ALARM_SOUTH * Math.PI / 180.0) / 2.0))
             val projH = mercN - mercS
-            val projW = (UA_EAST - UA_WEST) * Math.PI / 180.0
-            val scale = minOf(VIEWBOX_WIDTH / projW, VIEWBOX_HEIGHT / projH)
-            val offsetX = (VIEWBOX_WIDTH - projW * scale) / 2.0
-            val offsetY = (VIEWBOX_HEIGHT - projH * scale) / 2.0
+            val scale = minOf(UA_ALARM_VIEWBOX_WIDTH / projW, UA_ALARM_VIEWBOX_HEIGHT / projH)
+            val offsetX = (UA_ALARM_VIEWBOX_WIDTH - projW * scale) / 2.0
+            val offsetY = (UA_ALARM_VIEWBOX_HEIGHT - projH * scale) / 2.0
 
-            val lng = UA_WEST + ((mapX - offsetX) / scale) * 180.0 / Math.PI
+            val lng = UA_ALARM_WEST + ((mapX - offsetX) / scale) * 180.0 / Math.PI
             val projLat = mercN - (mapY - offsetY) / scale
             val lat = (2.0 * atan(exp(projLat)) - Math.PI / 2.0) * 180.0 / Math.PI
 
