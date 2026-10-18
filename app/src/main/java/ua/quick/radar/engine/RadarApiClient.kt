@@ -55,6 +55,7 @@ class RadarApiClient {
 
     fun resetTracks() {
         activeTracks.clear()
+        nextTrackId = 1
     }
 
     fun generateFibonacciKey(source: String): String {
@@ -544,7 +545,7 @@ class RadarApiClient {
                 val course = tr.course
 
                 val speedCap = max(knownSpd * 1.35, 1100.0)
-                val maxAllowedDist = max(1.5, min(10.0, (speedCap / 3600.0) * dt + 1.2))
+                val maxAllowedDist = max(2.5, min(14.0, (speedCap / 3600.0) * dt + 2.0))
                 val dRaw = ThreatAnalyzer.haversineKm(tr.lat, tr.lng, pLat, pLng)
                 if (dRaw > maxAllowedDist) continue
 
@@ -557,11 +558,11 @@ class RadarApiClient {
                     val bearingStep = ThreatAnalyzer.calculateBearing(tr.lat, tr.lng, pLat, pLng)
                     val angleDiff = abs((bearingStep - course + 180.0) % 360.0 - 180.0)
 
-                    // Strict forward flight cone for airborne threats:
-                    if (dRaw > 0.4 && angleDiff > 80.0) {
+                    // Avoid rejecting tracks during turns, zig-zags, or lateral triangulation jitter:
+                    if (dRaw > 3.5 && angleDiff > 95.0) {
                         continue
                     }
-                    dProj * 1.0 + (angleDiff / 25.0)
+                    dProj * 1.0 + (angleDiff / 20.0)
                 } else {
                     dRaw
                 }

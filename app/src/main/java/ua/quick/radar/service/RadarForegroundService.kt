@@ -35,10 +35,21 @@ class RadarForegroundService : Service() {
     private val uaAlarmClient = UkraineAlarmClient()
     private val gson = Gson()
 
+    data class TrackedAlertThreat(
+        var trackId: String,
+        var lat: Double,
+        var lng: Double,
+        var lastSeenTimeMs: Long,
+        var courseDeg: Double? = null,
+        var avgSpeedKmh: Double? = null
+    )
+
     private var lastCriticalAlertTime = 0L
     private var lastSectorAlertTime = 0L
-    private val notifiedCriticalTrackIds = mutableSetOf<String>()
-    private val notifiedSectorTrackIds = mutableSetOf<String>()
+    private val alertedSectorThreats = mutableListOf<TrackedAlertThreat>()
+    private val alertedCriticalThreats = mutableListOf<TrackedAlertThreat>()
+    private val uaToFlugerTrackMap = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private var monitoringJob: Job? = null
 
     private var activeMediaPlayer: MediaPlayer? = null
 
@@ -73,6 +84,9 @@ class RadarForegroundService : Service() {
         fun resetAllTracks() {
             instance?.radarClient?.resetTracks()
             instance?.uaAlarmClient?.resetTracks()
+            instance?.alertedSectorThreats?.clear()
+            instance?.alertedCriticalThreats?.clear()
+            instance?.uaToFlugerTrackMap?.clear()
             _latestTargetsFlow.value = emptyList()
             triggerImmediateScan()
         }
@@ -110,6 +124,8 @@ class RadarForegroundService : Service() {
         super.onDestroy()
         instance = null
         isRunning = false
+        monitoringJob?.cancel()
+        monitoringJob = null
         serviceJob.cancel()
         releaseWakeLock()
         stopAudioPlayback()
@@ -260,7 +276,10 @@ class RadarForegroundService : Service() {
     }
 
     private fun startMonitoringLoop() {
-        serviceScope.launch {
+        if (monitoringJob?.isActive == true) {
+            return
+        }
+        monitoringJob = serviceScope.launch {
             while (isActive) {
                 val cycleStartTime = System.currentTimeMillis()
                 try {
@@ -378,6 +397,7 @@ class RadarForegroundService : Service() {
             }
             matchedFluger.add(ft.trackId)
             matchedUa.add(ut.trackId)
+            uaToFlugerTrackMap[ut.trackId] = ft.trackId
 
             val fusedLat = ThreatAnalyzer.safeRound(ft.lat * 0.5 + ut.lat * 0.5, 5)
             val fusedLng = ThreatAnalyzer.safeRound(ft.lng * 0.5 + ut.lng * 0.5, 5)
@@ -437,7 +457,8 @@ class RadarForegroundService : Service() {
                 if (!settings.uaAllUkraine && dist > settings.sectorRadiusKm * 1.15) {
                     continue
                 }
-                fused.add(ut)
+                val persistentId = uaToFlugerTrackMap[ut.trackId] ?: ut.trackId
+                fused.add(ut.copy(trackId = persistentId))
             }
         }
 
@@ -461,45 +482,166 @@ class RadarForegroundService : Service() {
         }
     }
 
+    private fun matchExistingAlertedTarget(
+        target: RadarTarget,
+        pool: List<TrackedAlertThreat>,
+        nowMs: Long
+    ): TrackedAlertThreat? {
+        // 1. Exact trackId match
+        val idMatch = pool.firstOrNull { it.trackId == target.trackId }
+        if (idMatch != null) return idMatch
+
+        // 2. Cross-sensor mapped trackId match
+        val mappedFlugerId = uaToFlugerTrackMap[target.trackId]
+        if (mappedFlugerId != null) {
+            val mappedMatch = pool.firstOrNull { it.trackId == mappedFlugerId }
+            if (mappedMatch != null) return mappedMatch
+        }
+
+        // 3. Spatial and temporal continuity match
+        var bestMatch: TrackedAlertThreat? = null
+        var bestDist = Double.MAX_VALUE
+
+        for (existing in pool) {
+            val dtSec = max(1.0, (nowMs - existing.lastSeenTimeMs) / 1000.0)
+            if (dtSec > 120.0) continue // Expired past 2 minutes
+
+            val dKm = ThreatAnalyzer.haversineKm(existing.lat, existing.lng, target.lat, target.lng)
+            val speedKmh = target.avgSpeedKmh ?: existing.avgSpeedKmh ?: 500.0
+            val maxAllowedDist = max(14.0, (speedKmh / 3600.0) * dtSec + 5.0)
+
+            if (dKm <= maxAllowedDist) {
+                // If both targets have a known flight heading, ensure reasonable angular corridor
+                val c1 = target.courseDeg
+                val c2 = existing.courseDeg
+                var courseOk = true
+                if (c1 != null && c2 != null && dKm > 2.5) {
+                    val cDiff = abs((c1 - c2 + 180.0) % 360.0 - 180.0)
+                    if (cDiff > 75.0) {
+                        courseOk = false
+                    }
+                }
+                if (courseOk && dKm < bestDist) {
+                    bestDist = dKm
+                    bestMatch = existing
+                }
+            }
+        }
+
+        return bestMatch
+    }
+
     private fun handleAlerts(assessment: AlertAssessment, settings: AppSettings) {
         val now = System.currentTimeMillis()
+
+        // Clean up stale alerted threats not seen for > 120 seconds
+        alertedSectorThreats.removeAll { now - it.lastSeenTimeMs > 120_000L }
+        alertedCriticalThreats.removeAll { now - it.lastSeenTimeMs > 120_000L }
+
+        // Register any critical targets into alertedSectorThreats so transitioning between critical and sector is seamless
+        for (crit in assessment.criticalTargets) {
+            val ex = matchExistingAlertedTarget(crit, alertedSectorThreats, now)
+            if (ex != null) {
+                ex.trackId = crit.trackId
+                ex.lat = crit.lat
+                ex.lng = crit.lng
+                ex.lastSeenTimeMs = now
+                ex.courseDeg = crit.courseDeg
+                ex.avgSpeedKmh = crit.avgSpeedKmh ?: crit.instantSpeedKmh
+            } else {
+                alertedSectorThreats.add(
+                    TrackedAlertThreat(
+                        trackId = crit.trackId,
+                        lat = crit.lat,
+                        lng = crit.lng,
+                        lastSeenTimeMs = now,
+                        courseDeg = crit.courseDeg,
+                        avgSpeedKmh = crit.avgSpeedKmh ?: crit.instantSpeedKmh
+                    )
+                )
+            }
+        }
 
         // 1. Critical Channel Alert
         if (assessment.isCritical && settings.criticalEnabled) {
             val critTargets = assessment.criticalTargets
-            val newTrackFound = critTargets.any { !notifiedCriticalTrackIds.contains(it.trackId) }
+            val newCritFound = critTargets.any { crit ->
+                matchExistingAlertedTarget(crit, alertedCriticalThreats, now) == null
+            }
             val cooldownPassed = (now - lastCriticalAlertTime) >= 30_000L
 
-            if (newTrackFound || cooldownPassed) {
+            for (crit in critTargets) {
+                val ex = matchExistingAlertedTarget(crit, alertedCriticalThreats, now)
+                if (ex != null) {
+                    ex.trackId = crit.trackId
+                    ex.lat = crit.lat
+                    ex.lng = crit.lng
+                    ex.lastSeenTimeMs = now
+                    ex.courseDeg = crit.courseDeg
+                    ex.avgSpeedKmh = crit.avgSpeedKmh ?: crit.instantSpeedKmh
+                } else {
+                    alertedCriticalThreats.add(
+                        TrackedAlertThreat(
+                            trackId = crit.trackId,
+                            lat = crit.lat,
+                            lng = crit.lng,
+                            lastSeenTimeMs = now,
+                            courseDeg = crit.courseDeg,
+                            avgSpeedKmh = crit.avgSpeedKmh ?: crit.instantSpeedKmh
+                        )
+                    )
+                }
+            }
+
+            if (newCritFound || cooldownPassed) {
                 lastCriticalAlertTime = now
-                critTargets.forEach { notifiedCriticalTrackIds.add(it.trackId) }
                 fireCriticalNotification(critTargets, settings)
             }
         } else if (!assessment.isCritical) {
             notificationManager.cancel(NOTIF_CRITICAL_ID)
-            notifiedCriticalTrackIds.clear()
         }
 
         // 2. Sector Awareness Channel Alert (Yellow)
         if (assessment.isSector && !assessment.isCritical && settings.sectorEnabled) {
             val sectTargets = assessment.sectorTargets
-            val currentSectorIds = sectTargets.map { it.trackId }.toSet()
+            val newTargets = mutableListOf<RadarTarget>()
 
-            // Detect genuinely new targets that have not triggered an alert in the current sector presence
-            val newTracks = sectTargets.filter { !notifiedSectorTrackIds.contains(it.trackId) }
+            for (target in sectTargets) {
+                val existing = matchExistingAlertedTarget(target, alertedSectorThreats, now)
+                if (existing != null) {
+                    // Threat already alerted in this sector: update its position & heading silently
+                    existing.trackId = target.trackId
+                    existing.lat = target.lat
+                    existing.lng = target.lng
+                    existing.lastSeenTimeMs = now
+                    existing.courseDeg = target.courseDeg
+                    existing.avgSpeedKmh = target.avgSpeedKmh ?: target.instantSpeedKmh
+                } else {
+                    // Genuinely NEW target entered sector!
+                    newTargets.add(target)
+                    alertedSectorThreats.add(
+                        TrackedAlertThreat(
+                            trackId = target.trackId,
+                            lat = target.lat,
+                            lng = target.lng,
+                            lastSeenTimeMs = now,
+                            courseDeg = target.courseDeg,
+                            avgSpeedKmh = target.avgSpeedKmh ?: target.instantSpeedKmh
+                        )
+                    )
+                }
+            }
 
-            // Prune tracks that left the sector from history
-            notifiedSectorTrackIds.retainAll(currentSectorIds)
-
-            // Alert strictly ONLY when at least one NEW target appears in the sector
-            if (newTracks.isNotEmpty()) {
+            // Alert strictly ONLY when at least one NEW target appears in the sector!
+            if (newTargets.isNotEmpty()) {
                 lastSectorAlertTime = now
-                sectTargets.forEach { notifiedSectorTrackIds.add(it.trackId) }
-                fireSectorNotification(sectTargets, newTracks, settings)
+                fireSectorNotification(sectTargets, newTargets, settings)
+            } else {
+                // Same targets continuing flight: update notification text silently without sound or vibration
+                updateSectorNotificationSilently(sectTargets)
             }
         } else if (!assessment.isSector) {
             notificationManager.cancel(NOTIF_SECTOR_ID)
-            notifiedSectorTrackIds.clear()
         }
     }
 
@@ -583,6 +725,41 @@ class RadarForegroundService : Service() {
             .setAutoCancel(true)
             .setContentIntent(pOpenIntent)
             .setVibrate(longArrayOf(0, 250, 150, 250))
+            .build()
+
+        notificationManager.notify(NOTIF_SECTOR_ID, notif)
+    }
+
+    private fun updateSectorNotificationSilently(targets: List<RadarTarget>) {
+        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pOpenIntent = PendingIntent.getActivity(
+            this, 2, openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val count = targets.size
+        val closest = targets.minByOrNull { it.distanceKm ?: 999.0 }
+        val targetName = closest?.category ?: "Ціль"
+        val distText = closest?.distanceKm?.let { " (~${it.toInt()} км)" } ?: ""
+
+        val title = "🟡 У секторі: $count ${if (count == 1) "ціль" else if (count in 2..4) "цілі" else "цілей"}"
+        val body = "Найближча: $targetName$distText."
+
+        val notif = NotificationCompat.Builder(this, CHANNEL_SECTOR_ID)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setSmallIcon(R.drawable.ic_stat_radar)
+            .setColor(Color.YELLOW)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setAutoCancel(true)
+            .setContentIntent(pOpenIntent)
             .build()
 
         notificationManager.notify(NOTIF_SECTOR_ID, notif)
