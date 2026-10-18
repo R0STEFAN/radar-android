@@ -33,7 +33,10 @@ class RadarApiClient {
         var course: Double? = null,
         var avgSpeed: Double? = null,
         var instantSpeed: Double? = null,
-        var maxSpeed: Double = 0.0
+        var maxSpeed: Double = 0.0,
+        var isKab: Boolean = false,
+        var stagnantCycles: Int = 0,
+        var isStagnant: Boolean = false
     )
 
     private val activeTracks = ConcurrentHashMap<Int, InternalTrack>()
@@ -220,34 +223,63 @@ class RadarApiClient {
         // Clean stale tracks > 360 seconds
         activeTracks.entries.removeIf { nowSec - it.value.lastTimeSec > 360.0 }
 
-        val resultTargets = mutableListOf<RadarTarget>()
+        // 1. Compute candidate pairs using Kinematic Cone & Forward Flight Projection
+        data class CandidatePair(val cost: Double, val pIdx: Int, val trackId: Int)
+        val distPairs = mutableListOf<CandidatePair>()
+
+        for ((pIdx, pt) in rawDetectedPoints.withIndex()) {
+            val pLat = pt.first
+            val pLng = pt.second
+            for ((tid, tr) in activeTracks) {
+                val dt = max(1.0, nowSec - tr.lastTimeSec)
+                val knownSpd = tr.avgSpeed ?: tr.instantSpeed ?: 350.0
+                val course = tr.course
+
+                val speedCap = max(knownSpd * 1.35, 1100.0)
+                val maxAllowedDist = max(3.0, min(55.0, (speedCap / 3600.0) * dt + 3.5))
+                val dRaw = ThreatAnalyzer.haversineKm(tr.lat, tr.lng, pLat, pLng)
+                if (dRaw > maxAllowedDist) continue
+
+                // Vector Cone Matching:
+                val cost = if (knownSpd >= 80.0 && course != null && tr.history.size >= 2) {
+                    val projDistM = (knownSpd * 1000.0 / 3600.0) * dt
+                    val projPt = ThreatAnalyzer.getDestinationPoint(tr.lat, tr.lng, projDistM, course)
+                    val dProj = ThreatAnalyzer.haversineKm(projPt.first, projPt.second, pLat, pLng)
+
+                    val bearingStep = ThreatAnalyzer.calculateBearing(tr.lat, tr.lng, pLat, pLng)
+                    val angleDiff = abs((bearingStep - course + 180.0) % 360.0 - 180.0)
+
+                    // Strict forward flight cone for airborne threats:
+                    if (knownSpd >= 180.0 && dRaw > 0.4 && angleDiff > 50.0) {
+                        continue
+                    }
+                    dProj * 1.0 + (angleDiff / 25.0)
+                } else {
+                    dRaw
+                }
+                distPairs.add(CandidatePair(cost, pIdx, tid))
+            }
+        }
+
+        distPairs.sortBy { it.cost }
+        val matchedP = mutableMapOf<Int, Int>()
         val usedTracks = mutableSetOf<Int>()
 
-        for (pt in rawDetectedPoints) {
+        for (cand in distPairs) {
+            if (matchedP.containsKey(cand.pIdx) || usedTracks.contains(cand.trackId)) continue
+            matchedP[cand.pIdx] = cand.trackId
+            usedTracks.add(cand.trackId)
+        }
+
+        val updatedTargets = mutableListOf<RadarTarget>()
+
+        for ((pIdx, pt) in rawDetectedPoints.withIndex()) {
             val pLat = pt.first
             val pLng = pt.second
 
-            // Find closest candidate track within kinematic range
-            var bestTrack: InternalTrack? = null
-            var bestDist = Double.MAX_VALUE
-
-            for ((tid, tr) in activeTracks) {
-                if (usedTracks.contains(tid)) continue
-                val dt = max(1.0, nowSec - tr.lastTimeSec)
-                val knownSpd = tr.avgSpeed ?: tr.instantSpeed ?: 300.0
-                val speedCap = max(knownSpd * 1.35, 1100.0)
-                val maxAllowedDist = max(3.0, min(55.0, (speedCap / 3600.0) * dt + 4.0))
-
-                val dRaw = ThreatAnalyzer.haversineKm(tr.lat, tr.lng, pLat, pLng)
-                if (dRaw <= maxAllowedDist && dRaw < bestDist) {
-                    bestDist = dRaw
-                    bestTrack = tr
-                }
-            }
-
-            val track = if (bestTrack != null) {
-                usedTracks.add(bestTrack.trackId)
-                bestTrack
+            val tid = matchedP[pIdx]
+            val track = if (tid != null && activeTracks.containsKey(tid)) {
+                activeTracks[tid]!!
             } else {
                 val newId = nextTrackId++
                 val newTr = InternalTrack(newId, pLat, pLng, nowSec)
@@ -260,12 +292,14 @@ class RadarApiClient {
             track.lastTimeSec = nowSec
 
             val lastSample = track.history.lastOrNull()
-            if (lastSample == null || (nowSec - (track.timestamps.lastOrNull() ?: 0.0) >= 3.0) ||
-                ThreatAnalyzer.haversineKm(lastSample.first, lastSample.second, pLat, pLng) > 0.04
-            ) {
+            val stepD = if (lastSample != null) ThreatAnalyzer.haversineKm(lastSample.first, lastSample.second, pLat, pLng) else 0.0
+            val lastTime = track.timestamps.lastOrNull() ?: nowSec
+            val stepDt = max(1.0, nowSec - lastTime)
+
+            if (lastSample == null || (nowSec - lastTime >= 4.0) || stepD > 0.04) {
                 track.history.add(Pair(pLat, pLng))
                 track.timestamps.add(nowSec)
-                if (track.history.size > 200) {
+                if (track.history.size > 400) {
                     track.history.removeAt(0)
                     track.timestamps.removeAt(0)
                 }
@@ -273,59 +307,99 @@ class RadarApiClient {
 
             val hist = track.history
             val sampleCount = hist.size
-            val firstTime = track.timestamps.firstOrNull() ?: nowSec
-            val totalDt = max(1.0, nowSec - firstTime)
+            val firstP = hist.first()
+            val totalDt = max(1.0, nowSec - (track.timestamps.firstOrNull() ?: nowSec))
+            val netDist = ThreatAnalyzer.haversineKm(firstP.first, firstP.second, pLat, pLng)
 
-            var avgSpd: Double? = null
-            var instSpd: Double? = null
+            // Stagnation check
+            if (stepD < 0.18) {
+                track.stagnantCycles++
+            } else {
+                track.stagnantCycles = 0
+            }
+            track.isStagnant = (track.stagnantCycles >= 3) && (netDist < 0.35)
 
-            if (sampleCount >= 2) {
-                val firstP = hist.first()
-                val lastP = hist.last()
-                val netDist = ThreatAnalyzer.haversineKm(firstP.first, firstP.second, lastP.first, lastP.second)
-                val prevP = hist[sampleCount - 2]
-                val prevTime = track.timestamps[sampleCount - 2]
-                val stepDt = max(1.0, nowSec - prevTime)
-                val stepD = ThreatAnalyzer.haversineKm(prevP.first, prevP.second, lastP.first, lastP.second)
-
-                if (stepDt >= 2.0 && stepD >= 0.04) {
-                    instSpd = ThreatAnalyzer.safeRound((stepD / stepDt) * 3600.0, 0)
+            // Sliding window instant speed calculation
+            var instantSpeed = 0.0
+            val recentIndices = track.timestamps.indices.filter { nowSec - track.timestamps[it] <= 35.0 }
+            if (recentIndices.size >= 2) {
+                val idx0 = recentIndices.first()
+                val idx1 = recentIndices.last()
+                val wDt = track.timestamps[idx1] - track.timestamps[idx0]
+                if (wDt >= 8.0) {
+                    val wDist = ThreatAnalyzer.haversineKm(hist[idx0].first, hist[idx0].second, hist[idx1].first, hist[idx1].second)
+                    instantSpeed = (wDist / wDt) * 3600.0
                 }
-                if (totalDt >= 6.0 && netDist >= 0.08) {
-                    avgSpd = ThreatAnalyzer.safeRound((netDist / totalDt) * 3600.0, 0)
-                }
+            } else if (stepDt >= 8.0 && stepD >= 0.12) {
+                instantSpeed = (stepD / stepDt) * 3600.0
+            } else if (track.instantSpeed != null && track.instantSpeed!! > 0.0) {
+                instantSpeed = track.instantSpeed!!
+            } else if (totalDt >= 8.0) {
+                instantSpeed = (netDist / totalDt) * 3600.0
             }
 
-            track.avgSpeed = avgSpd
-            track.instantSpeed = instSpd
-            track.maxSpeed = max(track.maxSpeed, max(avgSpd ?: 0.0, instSpd ?: 0.0))
+            if (stepD < 0.10) {
+                instantSpeed = min(instantSpeed, 120.0)
+            }
+
+            // Average speed calculation on smoothed trajectory
+            var avgSpeed: Double? = null
+            if (track.isStagnant) {
+                avgSpeed = 0.0
+                instantSpeed = 0.0
+            } else if (totalDt >= 10.0) {
+                if (sampleCount >= 3) {
+                    val smPts = ThreatAnalyzer.smoothTrajectory(hist)
+                    var pathLen = 0.0
+                    for (i in 1 until smPts.size) {
+                        pathLen += ThreatAnalyzer.haversineKm(smPts[i-1][0], smPts[i-1][1], smPts[i][0], smPts[i][1])
+                    }
+                    avgSpeed = (pathLen / totalDt) * 3600.0
+                } else {
+                    avgSpeed = (netDist / totalDt) * 3600.0
+                }
+            } else {
+                avgSpeed = if (instantSpeed > 0.0) instantSpeed else null
+            }
+
+            // Max speed protection & KAB filtering
+            val prevMax = track.maxSpeed
+            var currentMax = prevMax
+            if (totalDt >= 14.0 && avgSpeed != null && avgSpeed > 40.0) {
+                val validInstant = if (instantSpeed <= max(avgSpeed * 1.4, 380.0)) instantSpeed else avgSpeed
+                currentMax = max(prevMax, max(avgSpeed, validInstant))
+            }
+
+            if (avgSpeed != null && (avgSpeed < 260.0 || totalDt > 160.0)) {
+                currentMax = min(currentMax, if (avgSpeed > 40.0) avgSpeed * 1.3 else 220.0)
+                track.isKab = false
+            }
+            track.maxSpeed = ThreatAnalyzer.safeRound(currentMax, 1)
+
+            // Strict KAB aerodynamic threshold
+            if (sampleCount >= 4 && totalDt <= 150.0 && avgSpeed != null && avgSpeed >= 320.0 && currentMax >= 580.0) {
+                track.isKab = true
+            } else if (avgSpeed != null && (avgSpeed < 300.0 || totalDt > 160.0)) {
+                track.isKab = false
+            }
+
+            track.avgSpeed = avgSpeed?.let { ThreatAnalyzer.safeRound(it, 0) }
+            track.instantSpeed = ThreatAnalyzer.safeRound(instantSpeed, 0)
 
             val course = ThreatAnalyzer.calculateTrackCourse(hist, track.course)
             track.course = course
             val courseCompass = ThreatAnalyzer.bearingToCompass(course)
             val smoothedPath = ThreatAnalyzer.smoothTrajectory(hist)
 
-            val classification = ThreatAnalyzer.classifyTarget(
-                avgSpeed = avgSpd ?: instSpd,
-                sampleCount = sampleCount,
-                maxSpeed = track.maxSpeed,
-                obsSec = totalDt
-            )
-
-            resultTargets.add(
+            updatedTargets.add(
                 RadarTarget(
                     trackId = "flg_${track.trackId}",
                     lat = ThreatAnalyzer.safeRound(pLat, 5),
                     lng = ThreatAnalyzer.safeRound(pLng, 5),
                     courseDeg = ThreatAnalyzer.safeRound(course, 0),
                     courseName = courseCompass,
-                    category = classification.name,
-                    sub = classification.sub,
-                    iconName = classification.iconName,
-                    tag = classification.tag,
-                    echelon = classification.echelon,
-                    avgSpeedKmh = avgSpd,
-                    instantSpeedKmh = instSpd,
+                    avgSpeedKmh = track.avgSpeed,
+                    instantSpeedKmh = track.instantSpeed,
                     source = "fluger",
                     sourceLabel = "Радар Флюгер",
                     path = smoothedPath
@@ -333,6 +407,97 @@ class RadarApiClient {
             )
         }
 
-        return resultTargets
+        // 4. Salvo Corridor Clustering (flights of 2-4 KABs/threats in the same corridor)
+        val salvoGroups = mutableMapOf<Int, MutableSet<String>>()
+        val assignedSalvo = mutableMapOf<String, Int>()
+        var nextSalvoId = 1
+
+        val activeThreats = updatedTargets.filter {
+            (it.avgSpeedKmh ?: 0.0) >= 140.0 && it.courseDeg != null && it.path.size >= 2
+        }
+
+        for (i in activeThreats.indices) {
+            val p1 = activeThreats[i]
+            for (j in i + 1 until activeThreats.size) {
+                val p2 = activeThreats[j]
+                val courseDiff = abs((p1.courseDeg!! - p2.courseDeg!! + 180.0) % 360.0 - 180.0)
+                if (courseDiff > 28.0) continue
+
+                val dBetween = ThreatAnalyzer.haversineKm(p1.lat, p1.lng, p2.lat, p2.lng)
+                if (dBetween !in 0.8..14.0) continue
+
+                val lineBrng = ThreatAnalyzer.calculateBearing(p1.lat, p1.lng, p2.lat, p2.lng)
+                val lineDiff = min(
+                    abs((lineBrng - p1.courseDeg!! + 180.0) % 360.0 - 180.0),
+                    abs(((lineBrng + 180.0) % 360.0 - p1.courseDeg!! + 180.0) % 360.0 - 180.0)
+                )
+                if (lineDiff <= 35.0) {
+                    val gid = assignedSalvo[p1.trackId] ?: assignedSalvo[p2.trackId] ?: nextSalvoId++
+                    assignedSalvo[p1.trackId] = gid
+                    assignedSalvo[p2.trackId] = gid
+                    salvoGroups.getOrPut(gid) { mutableSetOf() }.apply {
+                        add(p1.trackId)
+                        add(p2.trackId)
+                    }
+                }
+            }
+        }
+
+        // 5. Final target classification with salvo labels
+        val finalTargets = mutableListOf<RadarTarget>()
+        for (target in updatedTargets) {
+            val tidInt = target.trackId.removePrefix("flg_").toIntOrNull()
+            val tr = tidInt?.let { activeTracks[it] }
+
+            val inSalvo = assignedSalvo.containsKey(target.trackId)
+            var salvoPrefix = ""
+            var salvoCount = 1
+            if (inSalvo) {
+                val gid = assignedSalvo[target.trackId]!!
+                val members = salvoGroups[gid]!!.sorted()
+                val sIdx = members.indexOf(target.trackId) + 1
+                salvoCount = members.size
+                if (salvoCount > 1) {
+                    salvoPrefix = " [Група $sIdx/$salvoCount]"
+                }
+            }
+
+            val histSize = tr?.history?.size ?: target.path.size
+            val firstTime = tr?.timestamps?.firstOrNull() ?: nowSec
+            val obsSec = nowSec - firstTime
+
+            val cls = if (tr?.isStagnant == true) {
+                ClassificationResult(
+                    name = "Стаціонарний сигнал / Зупинився",
+                    sub = "Ціль не рухається на карті",
+                    icon = "⚡",
+                    iconName = "ic_drone",
+                    tag = "STATIONARY",
+                    echelon = "На поверхні"
+                )
+            } else {
+                ThreatAnalyzer.classifyTarget(
+                    avgSpeed = target.avgSpeedKmh ?: target.instantSpeedKmh,
+                    sampleCount = histSize,
+                    maxSpeed = tr?.maxSpeed,
+                    obsSec = obsSec,
+                    isKabConfirmed = tr?.isKab == true,
+                    salvoPrefix = salvoPrefix
+                )
+            }
+
+            finalTargets.add(
+                target.copy(
+                    category = cls.name,
+                    sub = cls.sub,
+                    iconName = cls.iconName,
+                    tag = cls.tag,
+                    echelon = cls.echelon,
+                    count = salvoCount
+                )
+            )
+        }
+
+        return finalTargets
     }
 }

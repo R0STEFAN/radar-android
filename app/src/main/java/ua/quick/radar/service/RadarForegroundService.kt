@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import ua.quick.radar.MainActivity
 import ua.quick.radar.R
 import ua.quick.radar.engine.*
+import kotlin.math.*
 
 class RadarForegroundService : Service() {
 

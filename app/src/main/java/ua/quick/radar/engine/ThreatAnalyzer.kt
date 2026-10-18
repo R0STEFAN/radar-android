@@ -153,7 +153,9 @@ object ThreatAnalyzer {
         avgSpeed: Double?,
         sampleCount: Int,
         maxSpeed: Double? = null,
-        obsSec: Double = 0.0
+        obsSec: Double = 0.0,
+        isKabConfirmed: Boolean = false,
+        salvoPrefix: String = ""
     ): ClassificationResult {
         if (sampleCount < 2 || avgSpeed == null) {
             return ClassificationResult(
@@ -178,21 +180,28 @@ object ThreatAnalyzer {
         }
 
         val maxSpd = maxSpeed ?: avgSpeed
-        val isRealKab = (avgSpeed in 300.0..1200.0) && (obsSec <= 150.0) && (sampleCount >= 4 && maxSpd >= 580.0)
+        // Aerodynamic KAB constraints from server:
+        // 1. Stall speed of FAB-250/500/1500 with UMPK is ~320-350 km/h
+        // 2. Autonomous glide time is 60-140s (never >160s)
+        val isRealKab = if (avgSpeed < 300.0 || obsSec > 160.0) {
+            false
+        } else {
+            isKabConfirmed || (sampleCount >= 4 && maxSpd >= 580.0 && avgSpeed >= 320.0 && obsSec <= 150.0)
+        }
 
         if (isRealKab) {
-            return if (avgSpeed < 550.0) {
+            return if (avgSpeed in 300.0..550.0) {
                 ClassificationResult(
-                    name = "КАБ (УМПК) на зниженні",
-                    sub = "Планування/піке (${avgSpeed.toInt()} км/год)",
+                    name = "КАБ (УМПК) на зниженні$salvoPrefix",
+                    sub = "Планування/піке (${avgSpeed.toInt()} км/год, пікова ${maxSpd.toInt()} км/год)",
                     icon = "💣",
                     iconName = "ic_airbomb",
                     tag = "KAB",
-                    echelon = "Пікірування (4000м → 0м)"
+                    echelon = "Пікірування (сходження 4000м → 0м)"
                 )
             } else {
                 ClassificationResult(
-                    name = "КАБ (УМПК) / Авіабомба",
+                    name = "КАБ (УМПК) / Авіабомба$salvoPrefix",
                     sub = "Швидкісний схід з висоти (${avgSpeed.toInt()} км/год)",
                     icon = "💣",
                     iconName = "ic_airbomb",
@@ -204,23 +213,23 @@ object ThreatAnalyzer {
 
         return when {
             avgSpeed < 135.0 -> ClassificationResult(
-                name = "БПЛА: Розвідник / «Молнія»",
-                sub = "Орлан / Zala / Supercam або «Молнія»",
+                name = "БПЛА: Розвідник / «Молнія»$salvoPrefix",
+                sub = "Орлан / Zala / Supercam або ударний камікадзе «Молнія-1/2»",
                 icon = "🛸",
                 iconName = "ic_drone",
                 tag = "UAV",
                 echelon = "Тактичний оглядовий (1 000 – 2 500 м)"
             )
             avgSpeed < 250.0 -> ClassificationResult(
-                name = "Шахед / «Молнія» (піке)",
-                sub = "Shahed-136 або камікадзе",
+                name = "Шахед / «Молнія» (піке)$salvoPrefix",
+                sub = "Shahed-136 або пікіруюча «Молнія» / камікадзе",
                 icon = "🛩️",
                 iconName = "ic_shahed",
                 tag = "SHAHED",
                 echelon = "Бриючий ешелон (80 – 350 м)"
             )
             avgSpeed < 550.0 -> ClassificationResult(
-                name = "Реактивний БПЛА",
+                name = "Реактивний БПЛА$salvoPrefix",
                 sub = "Shahed-238 або швидкісний дрон",
                 icon = "⚡",
                 iconName = "ic_shahed_jet",
@@ -228,15 +237,15 @@ object ThreatAnalyzer {
                 echelon = "Середній ешелон (1 500 – 3 500 м)"
             )
             avgSpeed < 1200.0 -> ClassificationResult(
-                name = "Крилата ракета / Швидкісна ціль",
-                sub = "Бандероль (S8000) / Х-101 / Калібр",
+                name = "Крилата ракета / Швидкісна ціль$salvoPrefix",
+                sub = "Бандероль (S8000) / Х-101 / Калібр / реактивний боєприпас",
                 icon = "🚀",
                 iconName = "ic_missile",
                 tag = "MISSILE",
                 echelon = "Наднизький ешелон (40 – 120 м)"
             )
             else -> ClassificationResult(
-                name = "Балістика / Надзвукова",
+                name = "Балістика / Надзвукова$salvoPrefix",
                 sub = "Аеробалістика або гіперзвук",
                 icon = "💥",
                 iconName = "ic_ballistic",
