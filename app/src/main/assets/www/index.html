@@ -1035,10 +1035,6 @@
     let deepstateGeoJsonCache = null;
     let deepstateLoading = false;
 
-    // Timer countdown
-    let secondsToRefresh = 20;
-    let countdownInterval = null;
-
     // --- Bridge Call Helper ---
     function callBridge(funcName, ...args) {
       if (window.AndroidBridge && typeof window.AndroidBridge[funcName] === 'function') {
