@@ -3,6 +3,11 @@ package ua.quick.radar.engine
 import android.util.Base64
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import okhttp3.Dispatcher
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -15,7 +20,13 @@ import kotlin.math.*
 
 class RadarApiClient {
 
+    private val dispatcher = Dispatcher().apply {
+        maxRequests = 32
+        maxRequestsPerHost = 20
+    }
+
     private val client = OkHttpClient.Builder()
+        .dispatcher(dispatcher)
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .build()
@@ -158,70 +169,363 @@ class RadarApiClient {
         return Triple(resLat, resLng, distKm)
     }
 
-    /**
-     * Triangulates targets from radar azimuths using 2 probe points (lat,lng) and (lat + 0.08, lng)
-     * and performs kinematic cone tracking to calculate speeds, trajectories, and classifications.
-     */
-    fun fetchFlugerTriangulatedTargets(lat: Double, lng: Double): List<RadarTarget> {
-        val r0 = fetchRawRadarData(lat, lng) ?: return emptyList()
-        val radarObj = r0.getAsJsonObject("radar") ?: return emptyList()
+    data class GridNode(val lat: Double, val lng: Double, val name: String)
 
+    private data class RadarObs(
+        val zone: String,
+        val azimuth: Double,
+        val minKm: Double,
+        val maxKm: Double,
+        val midKm: Double = (minKm + maxKm) / 2.0,
+        val color: String = "yellow"
+    )
+
+    private data class RawCandidate(
+        val lat: Double,
+        val lng: Double,
+        val isTriangulated: Boolean,
+        val weight: Double,
+        val sourceNode: Int,
+        val azimuth: Double,
+        val zone: String,
+        val color: String,
+        val nodeLat: Double = 0.0,
+        val nodeLng: Double = 0.0,
+        val minKm: Double = 0.0,
+        val maxKm: Double = 0.0
+    )
+
+    fun getRegionalGrid(lat: Double, lng: Double, radiusKm: Double): List<GridNode> {
+        if (radiusKm <= 48.0) {
+            return listOf(GridNode(lat, lng, "Центр"))
+        }
+        val nodes = mutableListOf(GridNode(lat, lng, "Центр"))
+        if (radiusKm <= 95.0) {
+            // Center + 4 cardinal nodes at 45.0 km
+            for (brng in doubleArrayOf(0.0, 90.0, 180.0, 270.0)) {
+                val pt = ThreatAnalyzer.getDestinationPoint(lat, lng, 45_000.0, brng)
+                nodes.add(GridNode(pt.first, pt.second, "Вузол ${brng.toInt()}°"))
+            }
+        } else if (radiusKm <= 150.0) {
+            // Center + 6 hex nodes at 62.0 km
+            for (brng in doubleArrayOf(0.0, 60.0, 120.0, 180.0, 240.0, 300.0)) {
+                val pt = ThreatAnalyzer.getDestinationPoint(lat, lng, 62_000.0, brng)
+                nodes.add(GridNode(pt.first, pt.second, "Вузол ${brng.toInt()}°"))
+            }
+        } else {
+            // 200 km: Center + 6 inner at 55.0 km + 6 outer at 115.0 km
+            for (brng in doubleArrayOf(0.0, 60.0, 120.0, 180.0, 240.0, 300.0)) {
+                val pt = ThreatAnalyzer.getDestinationPoint(lat, lng, 55_000.0, brng)
+                nodes.add(GridNode(pt.first, pt.second, "Внутр ${brng.toInt()}°"))
+            }
+            for (brng in doubleArrayOf(30.0, 90.0, 150.0, 210.0, 270.0, 330.0)) {
+                val pt = ThreatAnalyzer.getDestinationPoint(lat, lng, 115_000.0, brng)
+                nodes.add(GridNode(pt.first, pt.second, "Зовн ${brng.toInt()}°"))
+            }
+        }
+        return nodes
+    }
+
+    private fun extractRegionalDetectedPoints(
+        grid: List<GridNode>,
+        radarResults: List<JsonObject?>
+    ): List<Pair<Double, Double>> {
         val zoneLimits = mapOf(
             "low" to Pair(0.0, 16.0),
             "medium" to Pair(14.0, 32.0),
             "high" to Pair(28.0, 48.0)
         )
 
-        data class RadarObs(val zone: String, val azimuth: Double, val minKm: Double, val maxKm: Double)
-        val obs0 = mutableListOf<RadarObs>()
-        for ((zone, limits) in zoneLimits) {
-            val zData = radarObj.getAsJsonObject(zone) ?: continue
-            val azArray = zData.getAsJsonArray("azimuth") ?: continue
-            for (azElement in azArray) {
-                obs0.add(RadarObs(zone, azElement.asDouble, limits.first, limits.second))
-            }
-        }
-
-        if (obs0.isEmpty()) return emptyList()
-
-        val lat2 = lat + 0.08
-        val lng2 = lng
-        val r1 = fetchRawRadarData(lat2, lng2)
-        val obs1 = mutableListOf<RadarObs>()
-        if (r1 != null && r1.has("radar")) {
-            val r1Radar = r1.getAsJsonObject("radar")
-            for ((zone, limits) in zoneLimits) {
-                val zData = r1Radar.getAsJsonObject(zone) ?: continue
-                val azArray = zData.getAsJsonArray("azimuth") ?: continue
-                for (azElement in azArray) {
-                    obs1.add(RadarObs(zone, azElement.asDouble, limits.first, limits.second))
+        val nodeObsList = mutableListOf<List<RadarObs>>()
+        for ((i, r) in radarResults.withIndex()) {
+            val obs = mutableListOf<RadarObs>()
+            val radarObj = r?.getAsJsonObject("radar")
+            if (radarObj != null) {
+                for ((zone, limits) in zoneLimits) {
+                    val zData = radarObj.getAsJsonObject(zone) ?: continue
+                    val azArray = zData.getAsJsonArray("azimuth") ?: continue
+                    val color = if (zData.has("color")) zData.get("color").asString else "yellow"
+                    for (azElement in azArray) {
+                        obs.add(
+                            RadarObs(
+                                zone = zone,
+                                azimuth = azElement.asDouble,
+                                minKm = limits.first,
+                                maxKm = limits.second,
+                                midKm = (limits.first + limits.second) / 2.0,
+                                color = color
+                            )
+                        )
+                    }
                 }
             }
+            nodeObsList.add(obs)
         }
 
-        val rawDetectedPoints = mutableListOf<Pair<Double, Double>>()
+        // Step A: Multi-node Pairwise Ray Triangulation
+        data class TriangulationCandidate(
+            val score: Double,
+            val lat: Double,
+            val lng: Double,
+            val node1: Int,
+            val az1: Double,
+            val node2: Int,
+            val az2: Double,
+            val zone: String,
+            val color: String
+        )
 
-        if (obs1.isNotEmpty()) {
-            for (t0 in obs0) {
-                for (t1 in obs1) {
-                    val intersection = intersectRays(lat, lng, t0.azimuth, lat2, lng2, t1.azimuth) ?: continue
-                    val (tLat, tLng, dist0) = intersection
-                    val dist1 = ThreatAnalyzer.haversineKm(lat2, lng2, tLat, tLng)
+        val triCandidates = mutableListOf<TriangulationCandidate>()
+        val N = grid.size
 
-                    if (dist0 in t0.minKm..t0.maxKm && dist1 in t1.minKm..t1.maxKm) {
-                        rawDetectedPoints.add(Pair(tLat, tLng))
+        for (i in 0 until N) {
+            val n1 = grid[i]
+            val obs1 = nodeObsList[i]
+            if (obs1.isEmpty()) continue
+
+            for (j in i + 1 until N) {
+                val n2 = grid[j]
+                val obs2 = nodeObsList[j]
+                if (obs2.isEmpty()) continue
+
+                val dNodes = ThreatAnalyzer.haversineKm(n1.lat, n1.lng, n2.lat, n2.lng)
+                if (dNodes > 105.0) continue
+
+                for (o1 in obs1) {
+                    for (o2 in obs2) {
+                        val intersection = intersectRays(n1.lat, n1.lng, o1.azimuth, n2.lat, n2.lng, o2.azimuth) ?: continue
+                        val (tLat, tLng, d1) = intersection
+                        val d2 = ThreatAnalyzer.haversineKm(n2.lat, n2.lng, tLat, tLng)
+
+                        if (d1 in (o1.minKm - 2.5)..(o1.maxKm + 2.5) && d2 in (o2.minKm - 2.5)..(o2.maxKm + 2.5)) {
+                            val angleBetween = abs((o1.azimuth - o2.azimuth + 180.0) % 360.0 - 180.0)
+                            if (angleBetween in 15.0..165.0) {
+                                val score = abs(d1 - o1.midKm) + abs(d2 - o2.midKm)
+                                triCandidates.add(
+                                    TriangulationCandidate(
+                                        score = score,
+                                        lat = tLat,
+                                        lng = tLng,
+                                        node1 = i,
+                                        az1 = o1.azimuth,
+                                        node2 = j,
+                                        az2 = o2.azimuth,
+                                        zone = o1.zone,
+                                        color = o1.color
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
 
-        if (rawDetectedPoints.isEmpty()) {
-            for (obs in obs0) {
-                val midDistMeters = ((obs.minKm + obs.maxKm) / 2.0) * 1000.0
-                val est = ThreatAnalyzer.getDestinationPoint(lat, lng, midDistMeters, obs.azimuth)
-                rawDetectedPoints.add(est)
+        triCandidates.sortBy { it.score }
+        val usedRays = mutableSetOf<Pair<Int, Double>>()
+        val candidateList = mutableListOf<RawCandidate>()
+
+        for (cand in triCandidates) {
+            val r1 = Pair(cand.node1, cand.az1)
+            val r2 = Pair(cand.node2, cand.az2)
+            if (usedRays.contains(r1) || usedRays.contains(r2)) continue
+            usedRays.add(r1)
+            usedRays.add(r2)
+
+            candidateList.add(
+                RawCandidate(
+                    lat = cand.lat,
+                    lng = cand.lng,
+                    isTriangulated = true,
+                    weight = 3.0,
+                    sourceNode = cand.node1,
+                    azimuth = cand.az1,
+                    zone = cand.zone,
+                    color = cand.color,
+                    nodeLat = grid[cand.node1].lat,
+                    nodeLng = grid[cand.node1].lng
+                )
+            )
+        }
+
+        // Step B: Untriangulated Rays Estimation
+        for (i in 0 until N) {
+            val n = grid[i]
+            for (o in nodeObsList[i]) {
+                val rKey = Pair(i, o.azimuth)
+                if (!usedRays.contains(rKey)) {
+                    val est = ThreatAnalyzer.getDestinationPoint(n.lat, n.lng, o.midKm * 1000.0, o.azimuth)
+                    candidateList.add(
+                        RawCandidate(
+                            lat = est.first,
+                            lng = est.second,
+                            isTriangulated = false,
+                            weight = 1.0,
+                            sourceNode = i,
+                            azimuth = o.azimuth,
+                            zone = o.zone,
+                            color = o.color,
+                            nodeLat = n.lat,
+                            nodeLng = n.lng,
+                            minKm = o.minKm,
+                            maxKm = o.maxKm
+                        )
+                    )
+                }
             }
         }
+
+        if (candidateList.isEmpty()) return emptyList()
+
+        // Step C: Error-Aware Spatial Clustering & Deduplication
+        val clusters = mutableListOf<MutableList<RawCandidate>>()
+        for (cand in candidateList) {
+            var matchedCluster: MutableList<RawCandidate>? = null
+            var bestDist = Double.MAX_VALUE
+
+            for (cluster in clusters) {
+                val isMatch = cluster.any { member ->
+                    val d = ThreatAnalyzer.haversineKm(cand.lat, cand.lng, member.lat, member.lng)
+                    when {
+                        // Both triangulated: tightly clustered within 6.5 km
+                        cand.isTriangulated && member.isTriangulated -> d <= 6.5
+                        // One triangulated, one untriangulated ray
+                        cand.isTriangulated && !member.isTriangulated -> {
+                            val brng = ThreatAnalyzer.calculateBearing(member.nodeLat, member.nodeLng, cand.lat, cand.lng)
+                            val aDiff = abs((brng - member.azimuth + 180.0) % 360.0 - 180.0)
+                            val distNode = ThreatAnalyzer.haversineKm(member.nodeLat, member.nodeLng, cand.lat, cand.lng)
+                            (aDiff <= 8.0 && distNode in (member.minKm - 4.0)..(member.maxKm + 5.0)) || d <= 8.5
+                        }
+                        !cand.isTriangulated && member.isTriangulated -> {
+                            val brng = ThreatAnalyzer.calculateBearing(cand.nodeLat, cand.nodeLng, member.lat, member.lng)
+                            val aDiff = abs((brng - cand.azimuth + 180.0) % 360.0 - 180.0)
+                            val distNode = ThreatAnalyzer.haversineKm(cand.nodeLat, cand.nodeLng, member.lat, member.lng)
+                            (aDiff <= 8.0 && distNode in (cand.minKm - 4.0)..(cand.maxKm + 5.0)) || d <= 8.5
+                        }
+                        // Both untriangulated
+                        else -> {
+                            if (cand.sourceNode == member.sourceNode) {
+                                abs((cand.azimuth - member.azimuth + 180.0) % 360.0 - 180.0) <= 2.0 || d <= 5.0
+                            } else {
+                                d <= 8.5
+                            }
+                        }
+                    }
+                }
+
+                if (isMatch) {
+                    val dToFirst = ThreatAnalyzer.haversineKm(cand.lat, cand.lng, cluster.first().lat, cluster.first().lng)
+                    if (dToFirst < bestDist) {
+                        bestDist = dToFirst
+                        matchedCluster = cluster
+                    }
+                }
+            }
+
+            if (matchedCluster != null) {
+                matchedCluster.add(cand)
+            } else {
+                clusters.add(mutableListOf(cand))
+            }
+        }
+
+        // Step D: Calculate Weighted Centroid for each Cluster
+        val finalPoints = mutableListOf<Pair<Double, Double>>()
+        for (cluster in clusters) {
+            val totalWeight = cluster.sumOf { it.weight }
+            val wLat = cluster.sumOf { it.lat * it.weight } / totalWeight
+            val wLng = cluster.sumOf { it.lng * it.weight } / totalWeight
+            finalPoints.add(Pair(ThreatAnalyzer.safeRound(wLat, 5), ThreatAnalyzer.safeRound(wLng, 5)))
+        }
+
+        return finalPoints
+    }
+
+    /**
+     * Dual-mode target detection:
+     * - radiusKm <= 48.0 km: Fast local 2-point triangulation (lat, lng) & (lat + 0.08, lng).
+     * - radiusKm > 48.0 km: Multi-Node Regional Grid Scan (5 to 13 distributed nodes) with error-aware clustering.
+     */
+    suspend fun fetchFlugerTriangulatedTargets(
+        lat: Double,
+        lng: Double,
+        radiusKm: Double = 45.0
+    ): List<RadarTarget> {
+        val rawDetectedPoints: List<Pair<Double, Double>> = if (radiusKm <= 48.0) {
+            val r0 = fetchRawRadarData(lat, lng) ?: return emptyList()
+            val radarObj = r0.getAsJsonObject("radar") ?: return emptyList()
+
+            val zoneLimits = mapOf(
+                "low" to Pair(0.0, 16.0),
+                "medium" to Pair(14.0, 32.0),
+                "high" to Pair(28.0, 48.0)
+            )
+
+            val obs0 = mutableListOf<RadarObs>()
+            for ((zone, limits) in zoneLimits) {
+                val zData = radarObj.getAsJsonObject(zone) ?: continue
+                val azArray = zData.getAsJsonArray("azimuth") ?: continue
+                for (azElement in azArray) {
+                    obs0.add(RadarObs(zone, azElement.asDouble, limits.first, limits.second))
+                }
+            }
+
+            if (obs0.isEmpty()) return emptyList()
+
+            val lat2 = lat + 0.08
+            val lng2 = lng
+            val r1 = fetchRawRadarData(lat2, lng2)
+            val obs1 = mutableListOf<RadarObs>()
+            if (r1 != null && r1.has("radar")) {
+                val r1Radar = r1.getAsJsonObject("radar")
+                for ((zone, limits) in zoneLimits) {
+                    val zData = r1Radar.getAsJsonObject(zone) ?: continue
+                    val azArray = zData.getAsJsonArray("azimuth") ?: continue
+                    for (azElement in azArray) {
+                        obs1.add(RadarObs(zone, azElement.asDouble, limits.first, limits.second))
+                    }
+                }
+            }
+
+            val localPoints = mutableListOf<Pair<Double, Double>>()
+            if (obs1.isNotEmpty()) {
+                for (t0 in obs0) {
+                    for (t1 in obs1) {
+                        val intersection = intersectRays(lat, lng, t0.azimuth, lat2, lng2, t1.azimuth) ?: continue
+                        val (tLat, tLng, dist0) = intersection
+                        val dist1 = ThreatAnalyzer.haversineKm(lat2, lng2, tLat, tLng)
+
+                        if (dist0 in t0.minKm..t0.maxKm && dist1 in t1.minKm..t1.maxKm) {
+                            localPoints.add(Pair(tLat, tLng))
+                        }
+                    }
+                }
+            }
+
+            if (localPoints.isEmpty()) {
+                for (obs in obs0) {
+                    val midDistMeters = obs.midKm * 1000.0
+                    val est = ThreatAnalyzer.getDestinationPoint(lat, lng, midDistMeters, obs.azimuth)
+                    localPoints.add(est)
+                }
+            }
+            localPoints
+        } else {
+            val grid = getRegionalGrid(lat, lng, radiusKm)
+            val radarResults: List<JsonObject?> = coroutineScope {
+                grid.map { node ->
+                    async(Dispatchers.IO) {
+                        fetchRawRadarData(node.lat, node.lng)
+                    }
+                }.awaitAll()
+            }
+            extractRegionalDetectedPoints(grid, radarResults)
+        }
+
+        return processDetectedPointsToTargets(rawDetectedPoints)
+    }
+
+    private fun processDetectedPointsToTargets(rawDetectedPoints: List<Pair<Double, Double>>): List<RadarTarget> {
 
         val nowSec = System.currentTimeMillis() / 1000.0
         // Clean stale tracks > 75 seconds

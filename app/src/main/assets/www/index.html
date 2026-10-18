@@ -1598,6 +1598,11 @@
             return false;
           }
         }
+        if (t.source === 'fluger') {
+          if (t.distanceKm !== undefined && t.distanceKm !== null && t.distanceKm > appSettings.sectorRadiusKm * 1.15) {
+            return false;
+          }
+        }
         return true;
       });
 

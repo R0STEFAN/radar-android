@@ -269,7 +269,7 @@ class RadarForegroundService : Service() {
                     // Direct fetching according to active sensors (Fluger & UkraineAlarm)
                     val flugerTargetsDef = async {
                         if (settings.enableFluger) {
-                            radarClient.fetchFlugerTriangulatedTargets(settings.pinnedLat, settings.pinnedLng)
+                            radarClient.fetchFlugerTriangulatedTargets(settings.pinnedLat, settings.pinnedLng, settings.sectorRadiusKm)
                         } else emptyList()
                     }
                     val uaTargetsDef = async {
@@ -421,10 +421,13 @@ class RadarForegroundService : Service() {
             )
         }
 
-        // Add remaining unmatched Fluger targets
+        // Add remaining unmatched Fluger targets (filtered to monitored sector)
         for (ft in flugerList) {
             if (!matchedFluger.contains(ft.trackId)) {
-                fused.add(ft)
+                val dist = ThreatAnalyzer.haversineKm(settings.pinnedLat, settings.pinnedLng, ft.lat, ft.lng)
+                if (dist <= settings.sectorRadiusKm * 1.15) {
+                    fused.add(ft)
+                }
             }
         }
 
