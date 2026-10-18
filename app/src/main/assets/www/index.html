@@ -853,6 +853,14 @@
         </div>
 
         <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:12px;">🇺🇦 Мінцифра: вся Україна (вимк: тільки сектор)</span>
+          <label class="switch">
+            <input type="checkbox" id="toggleUaAll" onchange="onSettingsChanged()">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center;">
           <span style="font-size:12px;">🛸 Фільтр: Приховати розвідників (&lt;135 км/год)</span>
           <label class="switch">
             <input type="checkbox" id="toggleHideScouts" onchange="onSettingsChanged()">
@@ -972,6 +980,10 @@
         <button class="btn-block" onclick="requestBatteryOptimizationExemption()">
           <span>⚡ Вимкнути оптимізацію батареї для безперервної роботи</span>
         </button>
+
+        <button class="btn-block" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.5); color: #f87171; margin-top: 10px;" onclick="resetAllTracksUI()">
+          <span>🗑️ Очистити історію треків (Скидання)</span>
+        </button>
       </div>
 
     </div>
@@ -995,6 +1007,7 @@
       sectorVolume: 60,
       enableFluger: true,
       enableUaAlarm: true,
+      uaAllUkraine: false,
       hideScoutDrones: false,
       serviceEnabled: true
     };
@@ -1083,6 +1096,7 @@
 
       document.getElementById("toggleFlugerSource").checked = appSettings.enableFluger !== false;
       document.getElementById("toggleUaSource").checked = appSettings.enableUaAlarm !== false;
+      document.getElementById("toggleUaAll").checked = appSettings.uaAllUkraine === true;
       document.getElementById("toggleHideScouts").checked = appSettings.hideScoutDrones === true;
 
       document.getElementById("toggleService").checked = appSettings.serviceEnabled;
@@ -1107,6 +1121,7 @@
 
       appSettings.enableFluger = document.getElementById("toggleFlugerSource").checked;
       appSettings.enableUaAlarm = document.getElementById("toggleUaSource").checked;
+      appSettings.uaAllUkraine = document.getElementById("toggleUaAll").checked;
       appSettings.hideScoutDrones = document.getElementById("toggleHideScouts").checked;
 
       appSettings.serviceEnabled = document.getElementById("toggleService").checked;
@@ -1134,7 +1149,7 @@
       document.getElementById("labelSectorVolume").textContent = `${val}%`;
     }
 
-    // --- Countdown Timer (20 seconds cadence) ---
+    // --- Countdown Timer (20 seconds cadence synchronized with service) ---
     function startTimerCountdown() {
       if (countdownInterval) clearInterval(countdownInterval);
       secondsToRefresh = 20;
@@ -1143,24 +1158,44 @@
         secondsToRefresh--;
         if (secondsToRefresh <= 0) {
           secondsToRefresh = 20;
-          updateRadarData();
+          const timerEl = document.getElementById("countdownTimer");
+          if (timerEl) timerEl.textContent = "20 с";
+          const fillEl = document.getElementById("timerProgressFill");
+          if (fillEl) fillEl.style.width = "100%";
+          callBridge("triggerScanNow");
+        } else {
+          const timerEl = document.getElementById("countdownTimer");
+          if (timerEl) timerEl.textContent = `${secondsToRefresh} с`;
+          const pct = (secondsToRefresh / 20.0) * 100;
+          const fillEl = document.getElementById("timerProgressFill");
+          if (fillEl) fillEl.style.width = `${pct}%`;
         }
-        const timerEl = document.getElementById("countdownTimer");
-        if (timerEl) timerEl.textContent = `${secondsToRefresh} с`;
-        const pct = (secondsToRefresh / 20.0) * 100;
-        const fillEl = document.getElementById("timerProgressFill");
-        if (fillEl) fillEl.style.width = `${pct}%`;
       }, 1000);
     }
 
     function triggerManualRefresh() {
       secondsToRefresh = 20;
       const timerEl = document.getElementById("countdownTimer");
-      if (timerEl) timerEl.textContent = `20 с`;
+      if (timerEl) timerEl.textContent = "20 с";
       const fillEl = document.getElementById("timerProgressFill");
-      if (fillEl) fillEl.style.width = `100%`;
-      updateRadarData();
+      if (fillEl) fillEl.style.width = "100%";
+      callBridge("triggerScanNow");
       callBridge("showToast", "Оновлення даних...");
+    }
+
+    function resetAllTracksUI() {
+      callBridge("resetTracks");
+      for (const id in targetLayers) {
+        map.removeLayer(targetLayers[id]);
+      }
+      targetLayers = {};
+      targetMarkers = {};
+      renderThreatsList([]);
+      secondsToRefresh = 20;
+      const timerEl = document.getElementById("countdownTimer");
+      if (timerEl) timerEl.textContent = "20 с";
+      const fillEl = document.getElementById("timerProgressFill");
+      if (fillEl) fillEl.style.width = "100%";
     }
 
     // --- Leaflet Map Init (NO API KEY REQUIRED!) ---
@@ -1357,6 +1392,19 @@
       if (appSettings.hideScoutDrones) {
         targets = targets.filter(t => t.iconName !== 'ic_drone' && t.tag !== 'UAV' && !(t.avgSpeedKmh && t.avgSpeedKmh < 135));
       }
+
+      // Filter stationary / stagnant signals & nationwide UkraineAlarm
+      targets = targets.filter(t => {
+        if (t.tag === 'STATIONARY' || t.isStagnant === true) return false;
+        if (t.category && t.category.includes('Стаціонарний')) return false;
+        if (t.avgSpeedKmh !== null && t.avgSpeedKmh !== undefined && t.avgSpeedKmh < 45 && t.source === 'fluger') return false;
+        if (t.source === 'ukrainealarm' && !appSettings.uaAllUkraine) {
+          if (t.distanceKm !== undefined && t.distanceKm !== null && t.distanceKm > appSettings.sectorRadiusKm * 1.15) {
+            return false;
+          }
+        }
+        return true;
+      });
 
       renderThreatsOnMap(targets);
       renderThreatsList(targets);
@@ -1681,6 +1729,11 @@
 
     // --- Native Callbacks ---
     window.onRadarDataUpdated = function() {
+      secondsToRefresh = 20;
+      const timerEl = document.getElementById("countdownTimer");
+      if (timerEl) timerEl.textContent = "20 с";
+      const fillEl = document.getElementById("timerProgressFill");
+      if (fillEl) fillEl.style.width = "100%";
       updateRadarData();
     };
 

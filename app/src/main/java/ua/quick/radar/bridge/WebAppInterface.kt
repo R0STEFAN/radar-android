@@ -33,6 +33,7 @@ class WebAppInterface(private val activity: MainActivity) {
             sectorVolume = prefs.getInt("sector_volume", 60),
             enableFluger = prefs.getBoolean("enable_fluger", true),
             enableUaAlarm = prefs.getBoolean("enable_ua_alarm", true),
+            uaAllUkraine = prefs.getBoolean("ua_all_ukraine", false),
             hideScoutDrones = prefs.getBoolean("hide_scout_drones", false),
             serviceEnabled = prefs.getBoolean("service_enabled", true)
         )
@@ -57,6 +58,7 @@ class WebAppInterface(private val activity: MainActivity) {
                 .putInt("sector_volume", settings.sectorVolume)
                 .putBoolean("enable_fluger", settings.enableFluger)
                 .putBoolean("enable_ua_alarm", settings.enableUaAlarm)
+                .putBoolean("ua_all_ukraine", settings.uaAllUkraine)
                 .putBoolean("hide_scout_drones", settings.hideScoutDrones)
                 .putBoolean("service_enabled", settings.serviceEnabled)
                 .apply()
@@ -173,6 +175,19 @@ class WebAppInterface(private val activity: MainActivity) {
     fun showToast(message: String) {
         activity.runOnUiThread {
             Toast.makeText(activity, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    @JavascriptInterface
+    fun triggerScanNow() {
+        RadarForegroundService.triggerImmediateScan()
+    }
+
+    @JavascriptInterface
+    fun resetTracks() {
+        RadarForegroundService.resetAllTracks()
+        activity.runOnUiThread {
+            Toast.makeText(activity, "Історію треків очищено. Сканування...", Toast.LENGTH_SHORT).show()
         }
     }
 }

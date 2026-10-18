@@ -42,6 +42,10 @@ class RadarApiClient {
     private val activeTracks = ConcurrentHashMap<Int, InternalTrack>()
     private var nextTrackId = 1
 
+    fun resetTracks() {
+        activeTracks.clear()
+    }
+
     fun generateFibonacciKey(source: String): String {
         val fib = mutableListOf(0, 1)
         while ((fib[fib.size - 1] + fib[fib.size - 2]) < source.length) {
@@ -484,6 +488,17 @@ class RadarApiClient {
                     isKabConfirmed = tr?.isKab == true,
                     salvoPrefix = salvoPrefix
                 )
+            }
+
+            // Strict airborne filter (matching fluger_server.py):
+            // 1. Exclude stationary signals, antenna clutter, and radar noise
+            if (tr?.isStagnant == true || cls.tag == "STATIONARY") {
+                continue
+            }
+            // 2. Strict flight threshold: >= 2 samples, speed >= 45.0 km/h
+            val spd = target.avgSpeedKmh ?: target.instantSpeedKmh ?: 0.0
+            if (histSize < 2 || spd < 45.0) {
+                continue
             }
 
             finalTargets.add(

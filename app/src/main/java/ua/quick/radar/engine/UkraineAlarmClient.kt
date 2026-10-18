@@ -24,6 +24,10 @@ class UkraineAlarmClient {
     )
     private val trackHistories = ConcurrentHashMap<String, TrackHistory>()
 
+    fun resetTracks() {
+        trackHistories.clear()
+    }
+
     companion object {
         private const val UA_ALARM_VIEWBOX_WIDTH = 260.0
         private const val UA_ALARM_VIEWBOX_HEIGHT = 175.0
@@ -78,8 +82,8 @@ class UkraineAlarmClient {
         val items = parsed.movement?.from ?: return emptyList()
         val nowSec = System.currentTimeMillis() / 1000.0
 
-        // Prune stale tracks older than 6 minutes (360 seconds)
-        trackHistories.entries.removeIf { nowSec - it.value.lastSeenSec > 360.0 }
+        // Prune stale tracks older than 75 seconds (~3.5 cycles)
+        trackHistories.entries.removeIf { nowSec - it.value.lastSeenSec > 75.0 }
 
         val result = mutableListOf<RadarTarget>()
 

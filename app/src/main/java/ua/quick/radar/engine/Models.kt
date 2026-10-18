@@ -57,6 +57,7 @@ data class AppSettings(
     var sectorVolume: Int = 60,
     var enableFluger: Boolean = true,
     var enableUaAlarm: Boolean = true,
+    var uaAllUkraine: Boolean = false,
     var hideScoutDrones: Boolean = false,
     var serviceEnabled: Boolean = true
 )

@@ -63,10 +63,26 @@ class RadarForegroundService : Service() {
 
         var isRunning: Boolean = false
             private set
+
+        private var instance: RadarForegroundService? = null
+
+        fun triggerImmediateScan() {
+            instance?.scanTriggerChannel?.trySend(Unit)
+        }
+
+        fun resetAllTracks() {
+            instance?.radarClient?.resetTracks()
+            instance?.uaAlarmClient?.resetTracks()
+            _latestTargetsFlow.value = emptyList()
+            triggerImmediateScan()
+        }
     }
+
+    val scanTriggerChannel = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         isRunning = true
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -92,6 +108,7 @@ class RadarForegroundService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        instance = null
         isRunning = false
         serviceJob.cancel()
         releaseWakeLock()
@@ -135,6 +152,7 @@ class RadarForegroundService : Service() {
             sectorVolume = prefs.getInt("sector_volume", 60),
             enableFluger = prefs.getBoolean("enable_fluger", true),
             enableUaAlarm = prefs.getBoolean("enable_ua_alarm", true),
+            uaAllUkraine = prefs.getBoolean("ua_all_ukraine", false),
             hideScoutDrones = prefs.getBoolean("hide_scout_drones", false),
             serviceEnabled = prefs.getBoolean("service_enabled", true)
         )
@@ -263,13 +281,18 @@ class RadarForegroundService : Service() {
                     val uaTargets = uaTargetsDef.await()
 
                     // Cross-sensor fusion
-                    var fusedTargets = fuseTargets(flugerTargets, uaTargets)
+                    var fusedTargets = fuseTargets(flugerTargets, uaTargets, settings)
 
                     // Optional Scout UAV filtering
                     if (settings.hideScoutDrones) {
                         fusedTargets = fusedTargets.filterNot {
                             it.iconName == "ic_drone" || it.tag == "UAV" || (it.avgSpeedKmh != null && it.avgSpeedKmh < 135.0)
                         }
+                    }
+
+                    // Strict stationary / clutter suppression
+                    fusedTargets = fusedTargets.filterNot {
+                        it.tag == "STATIONARY" || (it.avgSpeedKmh != null && it.avgSpeedKmh < 45.0 && it.source == "fluger")
                     }
 
                     // Kinematics and threat assessment
@@ -289,15 +312,18 @@ class RadarForegroundService : Service() {
                     // Ignore transient network hiccups and retry
                 }
 
-                // Poll every 20 seconds matching Fluger server update frequency
-                delay(20000)
+                // Poll every 20 seconds OR wake up immediately on UI trigger
+                withTimeoutOrNull(20_000L) {
+                    scanTriggerChannel.receive()
+                }
             }
         }
     }
 
     private fun fuseTargets(
         flugerList: List<RadarTarget>,
-        uaList: List<RadarTarget>
+        uaList: List<RadarTarget>,
+        settings: AppSettings
     ): List<RadarTarget> {
         val fused = mutableListOf<RadarTarget>()
         val matchedUa = mutableSetOf<String>()
@@ -395,9 +421,13 @@ class RadarForegroundService : Service() {
             }
         }
 
-        // Add remaining unmatched UkraineAlarm targets
+        // Add remaining unmatched UkraineAlarm targets (filtered to monitored sector)
         for (ut in uaList) {
             if (!matchedUa.contains(ut.trackId)) {
+                val dist = ThreatAnalyzer.haversineKm(settings.pinnedLat, settings.pinnedLng, ut.lat, ut.lng)
+                if (!settings.uaAllUkraine && dist > settings.sectorRadiusKm * 1.15) {
+                    continue
+                }
                 fused.add(ut)
             }
         }
