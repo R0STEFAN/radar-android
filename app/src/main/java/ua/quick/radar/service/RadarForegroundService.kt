@@ -481,16 +481,22 @@ class RadarForegroundService : Service() {
             notifiedCriticalTrackIds.clear()
         }
 
-        // 2. Sector Awareness Channel Alert
+        // 2. Sector Awareness Channel Alert (Yellow)
         if (assessment.isSector && !assessment.isCritical && settings.sectorEnabled) {
             val sectTargets = assessment.sectorTargets
-            val newTrackFound = sectTargets.any { !notifiedSectorTrackIds.contains(it.trackId) }
-            val cooldownPassed = (now - lastSectorAlertTime) >= 60_000L
+            val currentSectorIds = sectTargets.map { it.trackId }.toSet()
 
-            if (newTrackFound || cooldownPassed) {
+            // Detect genuinely new targets that have not triggered an alert in the current sector presence
+            val newTracks = sectTargets.filter { !notifiedSectorTrackIds.contains(it.trackId) }
+
+            // Prune tracks that left the sector from history
+            notifiedSectorTrackIds.retainAll(currentSectorIds)
+
+            // Alert strictly ONLY when at least one NEW target appears in the sector
+            if (newTracks.isNotEmpty()) {
                 lastSectorAlertTime = now
                 sectTargets.forEach { notifiedSectorTrackIds.add(it.trackId) }
-                fireSectorNotification(sectTargets, settings)
+                fireSectorNotification(sectTargets, newTracks, settings)
             }
         } else if (!assessment.isSector) {
             notificationManager.cancel(NOTIF_SECTOR_ID)
@@ -536,7 +542,7 @@ class RadarForegroundService : Service() {
         notificationManager.notify(NOTIF_CRITICAL_ID, notif)
     }
 
-    private fun fireSectorNotification(targets: List<RadarTarget>, settings: AppSettings) {
+    private fun fireSectorNotification(targets: List<RadarTarget>, newTargets: List<RadarTarget>, settings: AppSettings) {
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -546,9 +552,22 @@ class RadarForegroundService : Service() {
         )
 
         val count = targets.size
-        val closest = targets.minByOrNull { it.distanceKm ?: 999.0 }
-        val title = "🟡 Повітряний рух у секторі ($count ${if (count == 1) "ціль" else "цілей"})"
-        val body = "Найближча ціль: ${closest?.category ?: "Ціль"} за ${closest?.distanceKm?.toInt() ?: 0} км"
+        val newTarget = newTargets.firstOrNull() ?: targets.minByOrNull { it.distanceKm ?: 999.0 }
+        val targetName = newTarget?.category ?: "Ціль"
+        val distText = newTarget?.distanceKm?.let { " (~${it.toInt()} км)" } ?: ""
+
+        val title = if (newTargets.size == 1) {
+            "🟡 Нова ціль у секторі: $targetName"
+        } else {
+            "🟡 Нові цілі у секторі (+${newTargets.size})"
+        }
+
+        val body = buildString {
+            append("Виявлено: $targetName$distText.")
+            if (count > 1) {
+                append(" Усього в секторі: $count ${if (count in 2..4) "цілі" else "цілей"}.")
+            }
+        }
 
         val beepUri = getBeepUri()
         playActiveSound(beepUri, settings.sectorVolume)
@@ -556,11 +575,13 @@ class RadarForegroundService : Service() {
         val notif = NotificationCompat.Builder(this, CHANNEL_SECTOR_ID)
             .setContentTitle(title)
             .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setSmallIcon(R.drawable.ic_stat_radar)
             .setColor(Color.YELLOW)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOnlyAlertOnce(true)
             .setAutoCancel(true)
             .setContentIntent(pOpenIntent)
             .setSound(beepUri)
