@@ -1165,37 +1165,67 @@
     }
 
     // --- Countdown Timer (20 seconds cadence synchronized with service) ---
+    let secondsToRefresh = 20;
+    let countdownInterval = null;
+    let isRefreshing = false;
+    let refreshTimeoutId = null;
+
     function startTimerCountdown() {
       if (countdownInterval) clearInterval(countdownInterval);
       secondsToRefresh = 20;
+      isRefreshing = false;
+      updateTimerUI();
 
       countdownInterval = setInterval(() => {
+        if (isRefreshing) return;
         secondsToRefresh--;
         if (secondsToRefresh <= 0) {
-          secondsToRefresh = 20;
-          const timerEl = document.getElementById("countdownTimer");
-          if (timerEl) timerEl.textContent = "20 с";
-          const fillEl = document.getElementById("timerProgressFill");
-          if (fillEl) fillEl.style.width = "100%";
+          secondsToRefresh = 0;
+          isRefreshing = true;
+          updateTimerUI();
           callBridge("triggerScanNow");
+          if (refreshTimeoutId) clearTimeout(refreshTimeoutId);
+          refreshTimeoutId = setTimeout(() => {
+            if (isRefreshing) {
+              isRefreshing = false;
+              secondsToRefresh = 20;
+              updateTimerUI();
+            }
+          }, 8000);
         } else {
-          const timerEl = document.getElementById("countdownTimer");
-          if (timerEl) timerEl.textContent = `${secondsToRefresh} с`;
-          const pct = (secondsToRefresh / 20.0) * 100;
-          const fillEl = document.getElementById("timerProgressFill");
-          if (fillEl) fillEl.style.width = `${pct}%`;
+          updateTimerUI();
         }
       }, 1000);
     }
 
-    function triggerManualRefresh() {
-      secondsToRefresh = 20;
+    function updateTimerUI() {
       const timerEl = document.getElementById("countdownTimer");
-      if (timerEl) timerEl.textContent = "20 с";
       const fillEl = document.getElementById("timerProgressFill");
-      if (fillEl) fillEl.style.width = "100%";
+      if (isRefreshing || secondsToRefresh <= 0) {
+        if (timerEl) timerEl.textContent = "🔄 20 с";
+        if (fillEl) fillEl.style.width = "0%";
+      } else {
+        if (timerEl) timerEl.textContent = `${secondsToRefresh} с`;
+        const pct = Math.max(0, Math.min(100, (secondsToRefresh / 20.0) * 100));
+        if (fillEl) fillEl.style.width = `${pct}%`;
+      }
+    }
+
+    function triggerManualRefresh() {
+      if (isRefreshing) return;
+      isRefreshing = true;
+      secondsToRefresh = 0;
+      updateTimerUI();
       callBridge("triggerScanNow");
       callBridge("showToast", "Оновлення даних...");
+      if (refreshTimeoutId) clearTimeout(refreshTimeoutId);
+      refreshTimeoutId = setTimeout(() => {
+        if (isRefreshing) {
+          isRefreshing = false;
+          secondsToRefresh = 20;
+          updateTimerUI();
+        }
+      }, 8000);
     }
 
     function resetAllTracksUI() {
@@ -1206,11 +1236,9 @@
       targetLayers = {};
       targetMarkers = {};
       renderThreatsList([]);
-      secondsToRefresh = 20;
-      const timerEl = document.getElementById("countdownTimer");
-      if (timerEl) timerEl.textContent = "20 с";
-      const fillEl = document.getElementById("timerProgressFill");
-      if (fillEl) fillEl.style.width = "100%";
+      isRefreshing = true;
+      secondsToRefresh = 0;
+      updateTimerUI();
     }
 
     // --- Leaflet Map Init (NO API KEY REQUIRED!) ---
@@ -1905,11 +1933,10 @@
 
     // --- Native Callbacks ---
     window.onRadarDataUpdated = function() {
+      if (refreshTimeoutId) clearTimeout(refreshTimeoutId);
+      isRefreshing = false;
       secondsToRefresh = 20;
-      const timerEl = document.getElementById("countdownTimer");
-      if (timerEl) timerEl.textContent = "20 с";
-      const fillEl = document.getElementById("timerProgressFill");
-      if (fillEl) fillEl.style.width = "100%";
+      updateTimerUI();
       updateRadarData();
     };
 

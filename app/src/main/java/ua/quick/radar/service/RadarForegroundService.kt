@@ -258,6 +258,7 @@ class RadarForegroundService : Service() {
     private fun startMonitoringLoop() {
         serviceScope.launch {
             while (isActive) {
+                val cycleStartTime = System.currentTimeMillis()
                 try {
                     val settings = loadSettings()
                     if (!settings.serviceEnabled) {
@@ -265,7 +266,7 @@ class RadarForegroundService : Service() {
                         continue
                     }
 
-                    // Direct fetching according to active sensors
+                    // Direct fetching according to active sensors (Fluger & UkraineAlarm)
                     val flugerTargetsDef = async {
                         if (settings.enableFluger) {
                             radarClient.fetchFlugerTriangulatedTargets(settings.pinnedLat, settings.pinnedLng)
@@ -312,8 +313,14 @@ class RadarForegroundService : Service() {
                     // Ignore transient network hiccups and retry
                 }
 
-                // Poll every 20 seconds OR wake up immediately on UI trigger
-                withTimeoutOrNull(20_000L) {
+                // Drain any pending trigger signals accumulated during the active network scan
+                while (scanTriggerChannel.tryReceive().isSuccess) {}
+
+                // Maintain a precise 20-second cycle between sensor sweeps
+                val elapsed = System.currentTimeMillis() - cycleStartTime
+                val waitTimeMs = maxOf(2000L, 20_000L - elapsed)
+
+                withTimeoutOrNull(waitTimeMs) {
                     scanTriggerChannel.receive()
                 }
             }
