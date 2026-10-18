@@ -209,7 +209,8 @@ class UkraineAlarmClient {
                     source = "ukrainealarm",
                     sourceLabel = "Офіційна карта «Повітряна тривога»",
                     path = pathCoords,
-                    count = count
+                    count = count,
+                    sampleCount = history.size
                 )
             )
         }

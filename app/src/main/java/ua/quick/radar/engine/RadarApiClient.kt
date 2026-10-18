@@ -406,6 +406,7 @@ class RadarApiClient {
                     instantSpeedKmh = track.instantSpeed,
                     source = "fluger",
                     sourceLabel = "Радар Флюгер",
+                    sampleCount = hist.size,
                     path = smoothedPath
                 )
             )
@@ -507,6 +508,9 @@ class RadarApiClient {
 
             finalTargets.add(
                 target.copy(
+                    courseDeg = course?.let { ThreatAnalyzer.safeRound(it, 0) },
+                    courseName = course?.let { ThreatAnalyzer.bearingToCompass(it) },
+                    sampleCount = histSize,
                     category = cls.name,
                     sub = cls.sub,
                     iconName = cls.iconName,

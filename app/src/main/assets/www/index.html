@@ -1625,7 +1625,7 @@
         const id = t.trackId;
         const lat = t.lat;
         const lng = t.lng;
-        const hasCourse = (t.courseDeg !== null && t.courseDeg !== undefined && !t.isStagnant && (t.sampleCount >= 2 || t.source === 'ukrainealarm'));
+        const hasCourse = (t.courseDeg !== null && t.courseDeg !== undefined && !t.isStagnant);
         const course = hasCourse ? t.courseDeg : 0;
         const inAlertZone = (t.distanceKm !== null && t.distanceKm !== undefined && t.distanceKm <= appSettings.criticalRadiusKm);
         const isCritical = inAlertZone && (t.isHeadingToUser || t.isCriticalIncoming);
