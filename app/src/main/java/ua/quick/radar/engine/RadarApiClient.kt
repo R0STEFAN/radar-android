@@ -220,8 +220,8 @@ class RadarApiClient {
         }
 
         val nowSec = System.currentTimeMillis() / 1000.0
-        // Clean stale tracks > 360 seconds
-        activeTracks.entries.removeIf { nowSec - it.value.lastTimeSec > 360.0 }
+        // Clean stale tracks > 75 seconds
+        activeTracks.entries.removeIf { nowSec - it.value.lastTimeSec > 75.0 }
 
         // 1. Compute candidate pairs using Kinematic Cone & Forward Flight Projection
         data class CandidatePair(val cost: Double, val pIdx: Int, val trackId: Int)
@@ -236,7 +236,7 @@ class RadarApiClient {
                 val course = tr.course
 
                 val speedCap = max(knownSpd * 1.35, 1100.0)
-                val maxAllowedDist = max(3.0, min(55.0, (speedCap / 3600.0) * dt + 3.5))
+                val maxAllowedDist = max(1.5, min(10.0, (speedCap / 3600.0) * dt + 1.2))
                 val dRaw = ThreatAnalyzer.haversineKm(tr.lat, tr.lng, pLat, pLng)
                 if (dRaw > maxAllowedDist) continue
 
@@ -250,7 +250,7 @@ class RadarApiClient {
                     val angleDiff = abs((bearingStep - course + 180.0) % 360.0 - 180.0)
 
                     // Strict forward flight cone for airborne threats:
-                    if (knownSpd >= 180.0 && dRaw > 0.4 && angleDiff > 50.0) {
+                    if (dRaw > 0.4 && angleDiff > 80.0) {
                         continue
                     }
                     dProj * 1.0 + (angleDiff / 25.0)
@@ -396,7 +396,7 @@ class RadarApiClient {
                     trackId = "flg_${track.trackId}",
                     lat = ThreatAnalyzer.safeRound(pLat, 5),
                     lng = ThreatAnalyzer.safeRound(pLng, 5),
-                    courseDeg = ThreatAnalyzer.safeRound(course, 0),
+                    courseDeg = course?.let { ThreatAnalyzer.safeRound(it, 0) },
                     courseName = courseCompass,
                     avgSpeedKmh = track.avgSpeed,
                     instantSpeedKmh = track.instantSpeed,

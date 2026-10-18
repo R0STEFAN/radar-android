@@ -41,9 +41,10 @@ object ThreatAnalyzer {
         return (deg + 360.0) % 360.0
     }
 
-    fun bearingToCompass(deg: Double): String {
+    fun bearingToCompass(deg: Double?): String {
+        if (deg == null) return "Визначається..."
         val directions = arrayOf("Пн", "Пн-Сх", "Сх", "Пд-Сх", "Пд", "Пд-Зх", "Зх", "Пн-Зх")
-        val index = round(((deg % 360.0) / 45.0)).toInt() % 8
+        val index = (round(((deg % 360.0) / 45.0)).toInt() % 8 + 8) % 8
         return directions[index]
     }
 
@@ -96,22 +97,17 @@ object ThreatAnalyzer {
         return smoothed.map { listOf(safeRound(it.first, 5), safeRound(it.second, 5)) }
     }
 
-    fun calculateTrackCourse(history: List<Pair<Double, Double>>, prevCourse: Double? = null): Double {
+    fun calculateTrackCourse(history: List<Pair<Double, Double>>, prevCourse: Double? = null): Double? {
         val n = history.size
-        if (n < 2) return prevCourse ?: 0.0
+        if (n < 2) return prevCourse
+
+        val pStart = history[0]
+        val pEnd = history[n - 1]
+        val netD = haversineKm(pStart.first, pStart.second, pEnd.first, pEnd.second)
+        if (netD < 0.15) return prevCourse
 
         if (n == 2) {
-            val p0 = history[0]
-            val p1 = history[1]
-            val d = haversineKm(p0.first, p0.second, p1.first, p1.second)
-            if (d < 0.15 && prevCourse != null) return prevCourse
-            val b = calculateBearing(p0.first, p0.second, p1.first, p1.second)
-            if (prevCourse != null) {
-                val diff = (b - prevCourse + 180.0) % 360.0 - 180.0
-                val clamped = max(-40.0, min(40.0, diff))
-                return (prevCourse + clamped + 360.0) % 360.0
-            }
-            return b
+            return safeRound(calculateBearing(pStart.first, pStart.second, pEnd.first, pEnd.second), 0)
         }
 
         val weights = doubleArrayOf(0.55, 0.30, 0.15)
@@ -125,7 +121,7 @@ object ThreatAnalyzer {
             val pCurr = history[i]
             val pPrev = history[i - 1]
             val dKm = haversineKm(pPrev.first, pPrev.second, pCurr.first, pCurr.second)
-            if (dKm < 0.08) continue
+            if (dKm < 0.05) continue
 
             val bRad = Math.toRadians(calculateBearing(pPrev.first, pPrev.second, pCurr.first, pCurr.second))
             val w = weights[segIdx]
@@ -135,18 +131,16 @@ object ThreatAnalyzer {
             segIdx++
         }
 
-        if (weightAcc < 0.1) return prevCourse ?: 0.0
-
-        val rawCourse = (Math.toDegrees(atan2(vxSum, vySum)) + 360.0) % 360.0
-        val finalCourse = if (prevCourse != null) {
-            val diff = (rawCourse - prevCourse + 180.0) % 360.0 - 180.0
-            val clamped = max(-30.0, min(30.0, diff))
-            (prevCourse + clamped + 360.0) % 360.0
-        } else {
-            rawCourse
+        if (weightAcc < 0.1) {
+            val pRecent = history[max(0, n - 4)]
+            if (haversineKm(pRecent.first, pRecent.second, pEnd.first, pEnd.second) >= 0.1) {
+                return safeRound(calculateBearing(pRecent.first, pRecent.second, pEnd.first, pEnd.second), 0)
+            }
+            return prevCourse
         }
 
-        return safeRound(finalCourse, 0)
+        val rawCourse = (Math.toDegrees(atan2(vxSum, vySum)) + 360.0) % 360.0
+        return safeRound(rawCourse, 0)
     }
 
     fun classifyTarget(
