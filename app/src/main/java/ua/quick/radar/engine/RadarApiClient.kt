@@ -816,13 +816,14 @@ class RadarApiClient {
             val inSalvo = assignedSalvo.containsKey(target.trackId)
             var salvoPrefix = ""
             var salvoCount = 1
+            var salvoIndex = 1
             if (inSalvo) {
                 val gid = assignedSalvo[target.trackId]!!
                 val members = salvoGroups[gid]!!.sorted()
-                val sIdx = members.indexOf(target.trackId) + 1
+                salvoIndex = members.indexOf(target.trackId) + 1
                 salvoCount = members.size
                 if (salvoCount > 1) {
-                    salvoPrefix = " [Група $sIdx/$salvoCount]"
+                    salvoPrefix = " [Група $salvoIndex/$salvoCount]"
                 }
             }
 
@@ -847,7 +848,7 @@ class RadarApiClient {
                     instantSpeed = target.instantSpeedKmh ?: tr?.instantSpeed,
                     obsSec = obsSec,
                     inSalvo = inSalvo,
-                    salvoIdx = sIdx,
+                    salvoIdx = salvoIndex,
                     salvoTotal = salvoCount,
                     isKabConfirmed = tr?.isKab == true,
                     salvoPrefix = salvoPrefix
