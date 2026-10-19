@@ -24,6 +24,11 @@ class UkraineAlarmClient {
     )
     private val trackHistories = ConcurrentHashMap<String, TrackHistory>()
 
+    var isPublicTargetsEnabled: Boolean = true
+        private set
+    var pauseReason: String? = null
+        private set
+
     fun resetTracks() {
         trackHistories.clear()
     }
@@ -77,9 +82,23 @@ class UkraineAlarmClient {
             gson.fromJson(responseBody, UaTargetsResponse::class.java)
         } catch (e: Exception) {
             return emptyList()
+        } ?: return emptyList()
+
+        val isPublicEnabled = parsed.publicTargetsEnabled ?: true
+        isPublicTargetsEnabled = isPublicEnabled
+        if (!isPublicEnabled) {
+            pauseReason = "Офіційне джерело (Мінцифра) оновлює карту, відображення цілей тимчасово призупинено"
+            trackHistories.clear()
+            return emptyList()
+        } else {
+            pauseReason = null
         }
 
-        val items = parsed.movement?.from ?: return emptyList()
+        val items = when {
+            parsed.targets != null && parsed.targets.isNotEmpty() -> parsed.targets
+            parsed.movement?.from != null -> parsed.movement.from
+            else -> emptyList()
+        }
         val nowSec = System.currentTimeMillis() / 1000.0
 
         // Prune stale tracks older than 75 seconds (~3.5 cycles)
@@ -89,7 +108,11 @@ class UkraineAlarmClient {
 
         for (item in items) {
             val tid = item.trackId ?: continue
-            val (lat, lng) = normalizedToLngLat(item.x, item.y)
+            val (lat, lng) = if (item.lat != null && item.lng != null && item.lat != 0.0) {
+                Pair(ThreatAnalyzer.safeRound(item.lat, 5), ThreatAnalyzer.safeRound(item.lng, 5))
+            } else {
+                normalizedToLngLat(item.x, item.y)
+            }
 
             var iconName = item.iconName?.trim() ?: ""
             var formular = item.formular?.trim() ?: ""

@@ -76,21 +76,25 @@ data class RadarPayload(
 
 data class UaMovementItem(
     @SerializedName("trackId") val trackId: String?,
-    @SerializedName("x") val x: Double,
-    @SerializedName("y") val y: Double,
-    @SerializedName("heading") val heading: Double?,
-    @SerializedName("formular") val formular: String?,
-    @SerializedName("detectedType") val detectedType: String?,
-    @SerializedName("iconName") val iconName: String?,
-    @SerializedName("currentCount") val currentCount: Int?
+    @SerializedName("x") val x: Double = 0.0,
+    @SerializedName("y") val y: Double = 0.0,
+    @SerializedName("lat") val lat: Double? = null,
+    @SerializedName("lng") val lng: Double? = null,
+    @SerializedName("heading") val heading: Double? = null,
+    @SerializedName("formular") val formular: String? = null,
+    @SerializedName("detectedType") val detectedType: String? = null,
+    @SerializedName("iconName") val iconName: String? = null,
+    @SerializedName("currentCount") val currentCount: Int? = null
 )
 
 data class UaMovementWrapper(
-    @SerializedName("from") val from: List<UaMovementItem>?
+    @SerializedName("from") val from: List<UaMovementItem>? = null
 )
 
 data class UaTargetsResponse(
-    @SerializedName("movement") val movement: UaMovementWrapper?
+    @SerializedName("publicTargetsEnabled") val publicTargetsEnabled: Boolean? = true,
+    @SerializedName("targets") val targets: List<UaMovementItem>? = null,
+    @SerializedName("movement") val movement: UaMovementWrapper? = null
 )
 
 data class UaAlertItem(
