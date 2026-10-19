@@ -163,7 +163,10 @@ class RadarForegroundService : Service() {
             criticalSoundUri = prefs.getString("critical_sound_uri", "") ?: "",
             criticalVolume = prefs.getInt("critical_volume", 80),
             sectorEnabled = prefs.getBoolean("sector_enabled", true),
-            sectorRadiusKm = prefs.getFloat("sector_radius_km", 100.0f).toDouble(),
+            sectorRadiusKm = run {
+                val r = prefs.getFloat("sector_radius_km", 45.0f).toDouble()
+                if (r != 45.0 && r != 80.0) 45.0 else r
+            },
             sectorSoundUri = prefs.getString("sector_sound_uri", "") ?: "",
             sectorVolume = prefs.getInt("sector_volume", 60),
             enableFluger = prefs.getBoolean("enable_fluger", true),

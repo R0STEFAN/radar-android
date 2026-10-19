@@ -196,40 +196,54 @@ class RadarApiClient {
         val maxKm: Double = 0.0
     )
 
-    fun getRegionalGrid(lat: Double, lng: Double, radiusKm: Double): List<GridNode> {
-        if (radiusKm <= 48.0) {
-            return listOf(GridNode(lat, lng, "Центр"))
-        }
-        val nodes = mutableListOf(GridNode(lat, lng, "Центр"))
-        if (radiusKm <= 95.0) {
-            // Center + 4 cardinal nodes at 45.0 km
-            for (brng in doubleArrayOf(0.0, 90.0, 180.0, 270.0)) {
-                val pt = ThreatAnalyzer.getDestinationPoint(lat, lng, 45_000.0, brng)
-                nodes.add(GridNode(pt.first, pt.second, "Вузол ${brng.toInt()}°"))
-            }
-        } else if (radiusKm <= 150.0) {
-            // Center + 6 hex nodes at 62.0 km
-            for (brng in doubleArrayOf(0.0, 60.0, 120.0, 180.0, 240.0, 300.0)) {
-                val pt = ThreatAnalyzer.getDestinationPoint(lat, lng, 62_000.0, brng)
-                nodes.add(GridNode(pt.first, pt.second, "Вузол ${brng.toInt()}°"))
-            }
-        } else {
-            // 200 km: Center + 6 inner at 55.0 km + 6 outer at 115.0 km
-            for (brng in doubleArrayOf(0.0, 60.0, 120.0, 180.0, 240.0, 300.0)) {
-                val pt = ThreatAnalyzer.getDestinationPoint(lat, lng, 55_000.0, brng)
-                nodes.add(GridNode(pt.first, pt.second, "Внутр ${brng.toInt()}°"))
-            }
-            for (brng in doubleArrayOf(30.0, 90.0, 150.0, 210.0, 270.0, 330.0)) {
-                val pt = ThreatAnalyzer.getDestinationPoint(lat, lng, 115_000.0, brng)
-                nodes.add(GridNode(pt.first, pt.second, "Зовн ${brng.toInt()}°"))
-            }
+    fun getGrid45km(lat: Double, lng: Double): List<GridNode> {
+        val nodes = mutableListOf(GridNode(lat, lng, "Центр (0км)"))
+        for (angle in doubleArrayOf(0.0, 60.0, 120.0, 180.0, 240.0, 300.0)) {
+            val pt = ThreatAnalyzer.getDestinationPoint(lat, lng, 27_000.0, angle)
+            nodes.add(GridNode(pt.first, pt.second, "Вузол 27км ${angle.toInt()}°"))
         }
         return nodes
     }
 
+    fun getGrid80km(lat: Double, lng: Double): List<GridNode> {
+        val nodes = mutableListOf(GridNode(lat, lng, "Центр (0км)"))
+        for (angle in doubleArrayOf(0.0, 60.0, 120.0, 180.0, 240.0, 300.0)) {
+            val pt = ThreatAnalyzer.getDestinationPoint(lat, lng, 38_000.0, angle)
+            nodes.add(GridNode(pt.first, pt.second, "Внутр 38км ${angle.toInt()}°"))
+        }
+        for (angle in doubleArrayOf(30.0, 90.0, 150.0, 210.0, 270.0, 330.0)) {
+            val pt = ThreatAnalyzer.getDestinationPoint(lat, lng, 72_000.0, angle)
+            nodes.add(GridNode(pt.first, pt.second, "Зовн 72км ${angle.toInt()}°"))
+        }
+        return nodes
+    }
+
+    fun extractRadarAzimuths(radarDict: JsonObject?): List<Double> {
+        if (radarDict == null) return emptyList()
+        val radarObj = if (radarDict.has("radar") && radarDict.get("radar").isJsonObject) {
+            radarDict.getAsJsonObject("radar")
+        } else {
+            radarDict
+        }
+        val azimuths = mutableListOf<Double>()
+        for (zone in arrayOf("low", "medium", "high")) {
+            val zData = radarObj.getAsJsonObject(zone) ?: continue
+            val azArray = zData.getAsJsonArray("azimuth") ?: continue
+            for (az in azArray) {
+                try {
+                    azimuths.add(az.asDouble)
+                } catch (e: Exception) {}
+            }
+        }
+        return azimuths
+    }
+
     private fun extractRegionalDetectedPoints(
         grid: List<GridNode>,
-        radarResults: List<JsonObject?>
+        radarResults: List<JsonObject?>,
+        radiusKm: Double,
+        userLat: Double,
+        userLng: Double
     ): List<Pair<Double, Double>> {
         val zoneLimits = mapOf(
             "low" to Pair(0.0, 16.0),
@@ -300,7 +314,7 @@ class RadarApiClient {
 
                         if (d1 in (o1.minKm - 2.5)..(o1.maxKm + 2.5) && d2 in (o2.minKm - 2.5)..(o2.maxKm + 2.5)) {
                             val angleBetween = abs((o1.azimuth - o2.azimuth + 180.0) % 360.0 - 180.0)
-                            if (angleBetween in 15.0..165.0) {
+                            if (angleBetween in 12.0..168.0) {
                                 val score = abs(d1 - o1.midKm) + abs(d2 - o2.midKm)
                                 triCandidates.add(
                                     TriangulationCandidate(
@@ -355,6 +369,10 @@ class RadarApiClient {
             for (o in nodeObsList[i]) {
                 val rKey = Pair(i, o.azimuth)
                 if (!usedRays.contains(rKey)) {
+                    // У локальному режимі (<= 45 км) не додаємо непідтверджені промені від допоміжних вузлів
+                    if (radiusKm <= 45.0 && i != 0) {
+                        continue
+                    }
                     val est = ThreatAnalyzer.getDestinationPoint(n.lat, n.lng, o.midKm * 1000.0, o.azimuth)
                     candidateList.add(
                         RawCandidate(
@@ -436,6 +454,13 @@ class RadarApiClient {
             val totalWeight = cluster.sumOf { it.weight }
             val wLat = cluster.sumOf { it.lat * it.weight } / totalWeight
             val wLng = cluster.sumOf { it.lng * it.weight } / totalWeight
+
+            val dUser = ThreatAnalyzer.haversineKm(userLat, userLng, wLat, wLng)
+            // Фільтр виходу за межі вибраного радіусу огляду (буфер 4.0 км, як на сервері)
+            if (dUser > radiusKm + 4.0) {
+                continue
+            }
+
             finalPoints.add(Pair(ThreatAnalyzer.safeRound(wLat, 5), ThreatAnalyzer.safeRound(wLng, 5)))
         }
 
@@ -443,86 +468,106 @@ class RadarApiClient {
     }
 
     /**
-     * Dual-mode target detection:
-     * - radiusKm <= 48.0 km: Fast local 2-point triangulation (lat, lng) & (lat + 0.08, lng).
-     * - radiusKm > 48.0 km: Multi-Node Regional Grid Scan (5 to 13 distributed nodes) with error-aware clustering.
+     * Adaptive dual-mode target surveillance matching fluger_server.py:
+     * - Mode 1 (45 km): Tactical Urban Shield. Clear sky -> 1 query to Center. Target ingress -> wakes 2 flanking nodes at 27 km.
+     * - Mode 2 (80 km): Regional Air Defense Network. Sentry patrol -> Center + 6 inner nodes at 38 km. Target ingress -> dynamic wake of outer 72 km nodes.
      */
     suspend fun fetchFlugerTriangulatedTargets(
         lat: Double,
         lng: Double,
         radiusKm: Double = 45.0
     ): List<RadarTarget> {
-        val rawDetectedPoints: List<Pair<Double, Double>> = if (radiusKm <= 48.0) {
-            val r0 = fetchRawRadarData(lat, lng) ?: return emptyList()
-            val radarObj = r0.getAsJsonObject("radar") ?: return emptyList()
+        val effectiveRadius = if (radiusKm > 45.0) 80.0 else 45.0
 
-            val zoneLimits = mapOf(
-                "low" to Pair(0.0, 16.0),
-                "medium" to Pair(14.0, 32.0),
-                "high" to Pair(28.0, 48.0)
-            )
+        val (queriedGrid, radarResults) = if (effectiveRadius <= 45.0) {
+            // ======================================================================
+            // РЕЖИМ 45 КМ: ТАКТИЧНИЙ ЩИТ МІСТА (Адаптивний гексагональний сектор)
+            // ======================================================================
+            val gridAll = getGrid45km(lat, lng)
+            // Етап 1 (Черговий режим): опитуємо ТІЛЬКИ центральний вузол
+            val r0 = fetchRawRadarData(gridAll[0].lat, gridAll[0].lng)
+            val cAzimuths = extractRadarAzimuths(r0)
 
-            val obs0 = mutableListOf<RadarObs>()
-            for ((zone, limits) in zoneLimits) {
-                val zData = radarObj.getAsJsonObject(zone) ?: continue
-                val azArray = zData.getAsJsonArray("azimuth") ?: continue
-                for (azElement in azArray) {
-                    obs0.add(RadarObs(zone, azElement.asDouble, limits.first, limits.second))
+            // Етап 2 (Секторний тригер): при виявленні променя будимо 2 секторні точки на 27 км
+            val activeIndices = mutableListOf(0)
+            if (cAzimuths.isNotEmpty()) {
+                val sectorNodes = mutableSetOf<Int>()
+                for (az in cAzimuths) {
+                    val sec = ((az % 360.0).toInt() / 60) % 6 // 0..5
+                    val n1 = sec + 1
+                    val n2 = ((sec + 1) % 6) + 1
+                    sectorNodes.add(n1)
+                    sectorNodes.add(n2)
                 }
+                activeIndices.addAll(sectorNodes.sorted())
             }
 
-            if (obs0.isEmpty()) return emptyList()
-
-            val lat2 = lat + 0.08
-            val lng2 = lng
-            val r1 = fetchRawRadarData(lat2, lng2)
-            val obs1 = mutableListOf<RadarObs>()
-            if (r1 != null && r1.has("radar")) {
-                val r1Radar = r1.getAsJsonObject("radar")
-                for ((zone, limits) in zoneLimits) {
-                    val zData = r1Radar.getAsJsonObject(zone) ?: continue
-                    val azArray = zData.getAsJsonArray("azimuth") ?: continue
-                    for (azElement in azArray) {
-                        obs1.add(RadarObs(zone, azElement.asDouble, limits.first, limits.second))
-                    }
-                }
-            }
-
-            val localPoints = mutableListOf<Pair<Double, Double>>()
-            if (obs1.isNotEmpty()) {
-                for (t0 in obs0) {
-                    for (t1 in obs1) {
-                        val intersection = intersectRays(lat, lng, t0.azimuth, lat2, lng2, t1.azimuth) ?: continue
-                        val (tLat, tLng, dist0) = intersection
-                        val dist1 = ThreatAnalyzer.haversineKm(lat2, lng2, tLat, tLng)
-
-                        if (dist0 in t0.minKm..t0.maxKm && dist1 in t1.minKm..t1.maxKm) {
-                            localPoints.add(Pair(tLat, tLng))
+            if (activeIndices.size == 1) {
+                Pair(listOf(gridAll[0]), listOf(r0))
+            } else {
+                val nodesToFetch = activeIndices.filter { it != 0 }.map { gridAll[it] }
+                val extraResults = coroutineScope {
+                    nodesToFetch.map { node ->
+                        async(Dispatchers.IO) {
+                            fetchRawRadarData(node.lat, node.lng)
                         }
-                    }
+                    }.awaitAll()
                 }
+                Pair(listOf(gridAll[0]) + nodesToFetch, listOf(r0) + extraResults)
             }
-
-            if (localPoints.isEmpty()) {
-                for (obs in obs0) {
-                    val midDistMeters = obs.midKm * 1000.0
-                    val est = ThreatAnalyzer.getDestinationPoint(lat, lng, midDistMeters, obs.azimuth)
-                    localPoints.add(est)
-                }
-            }
-            localPoints
         } else {
-            val grid = getRegionalGrid(lat, lng, radiusKm)
-            val radarResults: List<JsonObject?> = coroutineScope {
-                grid.map { node ->
+            // ======================================================================
+            // РЕЖИМ 80 КМ: ЕШЕЛОНОВАНЕ ППО (Двоконтурний шаховий гексагон, 13 точок)
+            // ======================================================================
+            val gridAll = getGrid80km(lat, lng)
+            // Етап 1 (Дозорний контур): опитуємо Центр + 6 внутрішніх дозорних на 38 км (0..6)
+            val sentryNodes = gridAll.subList(0, 7)
+            val sentryResults = coroutineScope {
+                sentryNodes.map { node ->
                     async(Dispatchers.IO) {
                         fetchRawRadarData(node.lat, node.lng)
                     }
                 }.awaitAll()
             }
-            extractRegionalDetectedPoints(grid, radarResults)
+
+            // Таблиця активації: внутрішній дозорний (1..6) будитиме зовнішні точки на 72 км (7..12)
+            val innerToOuter = mapOf(
+                1 to Pair(12, 7),   // 0° -> Зовн 330° та Зовн 30°
+                2 to Pair(7, 8),    // 60° -> Зовн 30° та Зовн 90°
+                3 to Pair(8, 9),    // 120° -> Зовн 90° та Зовн 150°
+                4 to Pair(9, 10),   // 180° -> Зовн 150° та Зовн 210°
+                5 to Pair(10, 11),  // 240° -> Зовн 210° та Зовн 270°
+                6 to Pair(11, 12)   // 300° -> Зовн 270° та Зовн 330°
+            )
+
+            val outerIndicesToWake = mutableSetOf<Int>()
+            for (idx in 1..6) {
+                if (extractRadarAzimuths(sentryResults[idx]).isNotEmpty()) {
+                    val pair = innerToOuter[idx]
+                    if (pair != null) {
+                        outerIndicesToWake.add(pair.first)
+                        outerIndicesToWake.add(pair.second)
+                    }
+                }
+            }
+
+            if (outerIndicesToWake.isEmpty()) {
+                Pair(sentryNodes, sentryResults)
+            } else {
+                val wakeList = outerIndicesToWake.sorted()
+                val outerNodesToFetch = wakeList.map { gridAll[it] }
+                val outerResults = coroutineScope {
+                    outerNodesToFetch.map { node ->
+                        async(Dispatchers.IO) {
+                            fetchRawRadarData(node.lat, node.lng)
+                        }
+                    }.awaitAll()
+                }
+                Pair(sentryNodes + outerNodesToFetch, sentryResults + outerResults)
+            }
         }
 
+        val rawDetectedPoints = extractRegionalDetectedPoints(queriedGrid, radarResults, effectiveRadius, lat, lng)
         return processDetectedPointsToTargets(rawDetectedPoints)
     }
 
@@ -802,7 +847,7 @@ class RadarApiClient {
             val spd = target.avgSpeedKmh ?: target.instantSpeedKmh ?: 0.0
             val course = target.courseDeg ?: tr?.course
 
-            val isMotionless = (tr?.isStagnant == true || cls.tag == "STATIONARY" || histSize < 2 || spd < 45.0 || netDist < 0.25 || course == null)
+            val isMotionless = (tr?.isStagnant == true || cls.tag == "STATIONARY" || cls.tag == "UNKNOWN" || histSize < 2 || spd < 45.0 || netDist < 0.25 || course == null)
 
             if (isMotionless) {
                 // Target is present in current Fluger scan but not moving:

@@ -56,7 +56,7 @@ data class AppSettings(
     var criticalSoundUri: String = "",
     var criticalVolume: Int = 80,
     var sectorEnabled: Boolean = true,
-    var sectorRadiusKm: Double = 100.0,
+    var sectorRadiusKm: Double = 45.0,
     var sectorSoundUri: String = "",
     var sectorVolume: Int = 60,
     var enableFluger: Boolean = true,

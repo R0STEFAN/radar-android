@@ -33,7 +33,10 @@ class WebAppInterface(private val activity: MainActivity) {
             criticalSoundUri = prefs.getString("critical_sound_uri", "") ?: "",
             criticalVolume = prefs.getInt("critical_volume", 80),
             sectorEnabled = prefs.getBoolean("sector_enabled", true),
-            sectorRadiusKm = prefs.getFloat("sector_radius_km", 100.0f).toDouble(),
+            sectorRadiusKm = run {
+                val r = prefs.getFloat("sector_radius_km", 45.0f).toDouble()
+                if (r != 45.0 && r != 80.0) 45.0 else r
+            },
             sectorSoundUri = prefs.getString("sector_sound_uri", "") ?: "",
             sectorVolume = prefs.getInt("sector_volume", 60),
             enableFluger = prefs.getBoolean("enable_fluger", true),
@@ -49,6 +52,7 @@ class WebAppInterface(private val activity: MainActivity) {
     fun saveSettings(json: String): Boolean {
         return try {
             val settings = gson.fromJson(json, AppSettings::class.java)
+            val sanitizedSectorRadius = if (settings.sectorRadiusKm == 80.0) 80.0 else 45.0
             prefs.edit()
                 .putFloat("pinned_lat", settings.pinnedLat.toFloat())
                 .putFloat("pinned_lng", settings.pinnedLng.toFloat())
@@ -58,7 +62,7 @@ class WebAppInterface(private val activity: MainActivity) {
                 .putString("critical_sound_uri", settings.criticalSoundUri)
                 .putInt("critical_volume", settings.criticalVolume)
                 .putBoolean("sector_enabled", settings.sectorEnabled)
-                .putFloat("sector_radius_km", settings.sectorRadiusKm.toFloat())
+                .putFloat("sector_radius_km", sanitizedSectorRadius.toFloat())
                 .putString("sector_sound_uri", settings.sectorSoundUri)
                 .putInt("sector_volume", settings.sectorVolume)
                 .putBoolean("enable_fluger", settings.enableFluger)
