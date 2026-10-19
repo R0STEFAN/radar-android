@@ -46,6 +46,7 @@ class RadarApiClient {
         var instantSpeed: Double? = null,
         var maxSpeed: Double = 0.0,
         var isKab: Boolean = false,
+        var isKabConfirmed: Boolean = false,
         var stagnantCycles: Int = 0,
         var isStagnant: Boolean = false
     )
@@ -590,11 +591,13 @@ class RadarApiClient {
                 val course = tr.course
 
                 val speedCap = max(knownSpd * 1.35, 1100.0)
-                val maxAllowedDist = max(2.5, min(14.0, (speedCap / 3600.0) * dt + 2.0))
+                // Realistic physical distance a target can cover in dt seconds (e.g. at 350 km/h in 20s = 1.9 km)
+                val maxAllowedDist = max(1.5, min(10.0, (speedCap / 3600.0) * dt + 1.2))
                 val dRaw = ThreatAnalyzer.haversineKm(tr.lat, tr.lng, pLat, pLng)
                 if (dRaw > maxAllowedDist) continue
 
-                // Vector Cone Matching:
+                // Kinematic & Directional Association:
+                // Accommodates real-time Shahed maneuvering (acute turns, evasive zigzags) and Fluger sector quantization jitter
                 val cost = if (knownSpd >= 80.0 && course != null && tr.history.size >= 2) {
                     val projDistM = (knownSpd * 1000.0 / 3600.0) * dt
                     val projPt = ThreatAnalyzer.getDestinationPoint(tr.lat, tr.lng, projDistM, course)
@@ -603,11 +606,9 @@ class RadarApiClient {
                     val bearingStep = ThreatAnalyzer.calculateBearing(tr.lat, tr.lng, pLat, pLng)
                     val angleDiff = abs((bearingStep - course + 180.0) % 360.0 - 180.0)
 
-                    // Avoid rejecting tracks during turns, zig-zags, or lateral triangulation jitter:
-                    if (dRaw > 3.5 && angleDiff > 95.0) {
-                        continue
-                    }
-                    dProj * 1.0 + (angleDiff / 20.0)
+                    // Prioritize forward projection when multiple candidates exist,
+                    // but never drop physically reachable targets executing acute turns or zigzags
+                    dProj * 0.7 + dRaw * 0.3 + (angleDiff / 25.0)
                 } else {
                     dRaw
                 }
@@ -716,25 +717,33 @@ class RadarApiClient {
                 avgSpeed = if (instantSpeed > 0.0) instantSpeed else null
             }
 
-            // Max speed protection & KAB filtering
+            // Max speed protection & KAB filtering (matching fluger_server.py):
             val prevMax = track.maxSpeed
             var currentMax = prevMax
             if (totalDt >= 14.0 && avgSpeed != null && avgSpeed > 40.0) {
                 val validInstant = if (instantSpeed <= max(avgSpeed * 1.4, 380.0)) instantSpeed else avgSpeed
                 currentMax = max(prevMax, max(avgSpeed, validInstant))
+            } else {
+                currentMax = prevMax
             }
 
-            if (avgSpeed != null && (avgSpeed < 260.0 || totalDt > 160.0)) {
+            // Захист та калібрування статусу КАБ (УМПК):
+            // Бомба планує не довше 160 с і не повільніше швидкості зриву (~300 км/год)
+            if (avgSpeed != null && (avgSpeed < 340.0 || totalDt > 160.0 || (instantSpeed > 0.0 && instantSpeed < 260.0))) {
                 currentMax = min(currentMax, if (avgSpeed > 40.0) avgSpeed * 1.3 else 220.0)
                 track.isKab = false
+                track.isKabConfirmed = false
             }
             track.maxSpeed = ThreatAnalyzer.safeRound(currentMax, 1)
 
-            // Strict KAB aerodynamic threshold
-            if (sampleCount >= 4 && totalDt <= 150.0 && avgSpeed != null && avgSpeed >= 320.0 && currentMax >= 580.0) {
-                track.isKab = true
-            } else if (avgSpeed != null && (avgSpeed < 300.0 || totalDt > 160.0)) {
+            // Раннє маркування КАБ (з 2-го заміру, тільки при збереженні високої швидкості):
+            if (totalDt <= 160.0 && avgSpeed != null && avgSpeed >= 340.0 && (instantSpeed <= 0.0 || instantSpeed >= 260.0)) {
+                if (sampleCount >= 2 && (avgSpeed >= 380.0 || currentMax >= 450.0)) {
+                    track.isKab = true
+                }
+            } else {
                 track.isKab = false
+                track.isKabConfirmed = false
             }
 
             track.avgSpeed = avgSpeed?.let { ThreatAnalyzer.safeRound(it, 0) }
@@ -823,8 +832,8 @@ class RadarApiClient {
 
             val cls = if (tr?.isStagnant == true) {
                 ClassificationResult(
-                    name = "Стаціонарний сигнал / Зупинився",
-                    sub = "Ціль не рухається на карті",
+                    name = "Стаціонарний сигнал / Завада",
+                    sub = "Електромагнітна завада або фантом (без руху)",
                     icon = "⚡",
                     iconName = "ic_drone",
                     tag = "STATIONARY",
@@ -835,55 +844,34 @@ class RadarApiClient {
                     avgSpeed = target.avgSpeedKmh ?: target.instantSpeedKmh,
                     sampleCount = histSize,
                     maxSpeed = tr?.maxSpeed,
+                    instantSpeed = target.instantSpeedKmh ?: tr?.instantSpeed,
                     obsSec = obsSec,
+                    inSalvo = inSalvo,
+                    salvoIdx = sIdx,
+                    salvoTotal = salvoCount,
                     isKabConfirmed = tr?.isKab == true,
                     salvoPrefix = salvoPrefix
                 )
             }
 
-            val netDist = tr?.history?.let { h ->
-                if (h.size >= 2) ThreatAnalyzer.haversineKm(h.first().first, h.first().second, h.last().first, h.last().second) else 0.0
-            } ?: (if (target.path.size >= 2) ThreatAnalyzer.haversineKm(target.path.first()[0], target.path.first()[1], target.path.last()[0], target.path.last()[1]) else 0.0)
-            val spd = target.avgSpeedKmh ?: target.instantSpeedKmh ?: 0.0
             val course = target.courseDeg ?: tr?.course
+            val isStationaryOrStagnant = (tr?.isStagnant == true || cls.tag == "STATIONARY")
 
-            val isMotionless = (tr?.isStagnant == true || cls.tag == "STATIONARY" || cls.tag == "UNKNOWN" || histSize < 2 || spd < 45.0 || netDist < 0.25 || course == null)
-
-            if (isMotionless) {
-                // Target is present in current Fluger scan but not moving:
-                // Show on map with unknown state '?' indicator
-                finalTargets.add(
-                    target.copy(
-                        courseDeg = null,
-                        courseName = "Без руху",
-                        sampleCount = histSize,
-                        category = "Ціль без руху ❓",
-                        sub = "Невідомий стан (сигнал без руху)",
-                        iconName = "ic_air_threat_combined_white",
-                        tag = "UNKNOWN",
-                        echelon = "Невідомо",
-                        count = 1,
-                        isStagnant = true,
-                        isUnknownState = true
-                    )
+            finalTargets.add(
+                target.copy(
+                    courseDeg = course?.let { ThreatAnalyzer.safeRound(it, 0) },
+                    courseName = course?.let { ThreatAnalyzer.bearingToCompass(it) } ?: (if (isStationaryOrStagnant) "Без руху" else "Визначається..."),
+                    sampleCount = histSize,
+                    category = cls.name,
+                    sub = cls.sub,
+                    iconName = cls.iconName,
+                    tag = cls.tag,
+                    echelon = cls.echelon,
+                    count = salvoCount,
+                    isStagnant = tr?.isStagnant == true,
+                    isUnknownState = isStationaryOrStagnant
                 )
-            } else {
-                finalTargets.add(
-                    target.copy(
-                        courseDeg = course?.let { ThreatAnalyzer.safeRound(it, 0) },
-                        courseName = course?.let { ThreatAnalyzer.bearingToCompass(it) },
-                        sampleCount = histSize,
-                        category = cls.name,
-                        sub = cls.sub,
-                        iconName = cls.iconName,
-                        tag = cls.tag,
-                        echelon = cls.echelon,
-                        count = salvoCount,
-                        isStagnant = false,
-                        isUnknownState = false
-                    )
-                )
-            }
+            )
         }
 
         return finalTargets
