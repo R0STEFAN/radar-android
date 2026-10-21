@@ -37,7 +37,8 @@
 - **Native Core (Kotlin):**
   - `ThreatAnalyzer.kt`: Гаверсинусна кінематика, розрахунок кутів пеленгу, часу підльоту (ETA), фільтрація РЕБ.
   - `RadarApiClient.kt`: Генерація фібоначчі-підпису та запити до `radar.quick.ua`.
-  - `UkraineAlarmClient.kt`: Опитування та перетворення проекції Меркатора для треків `map.ukrainealarm.com`.
+  - `CentrifugeMapDecoder.kt`: Демаскування Xorshift32 PRNG, FNV-1a хешування, LEB128 AST та десеріалізація Centrifugo fallback потоку Мінцифри.
+  - `UkraineAlarmClient.kt`: Опитування Centrifugo потоку `map.ukrainealarm.com`, перетворення проекції Меркатора та зсувів маркерів для треків Мінцифри.
   - `RadarForegroundService.kt`: Фоновий цикл опитування кожні 5 секунд, управління Notification Channels, запобігання спаму (debounce).
   - `WebAppInterface.kt`: Шлюз взаємодії між JavaScript і Kotlin.
 - **Tactical UI (WebView + Leaflet):**

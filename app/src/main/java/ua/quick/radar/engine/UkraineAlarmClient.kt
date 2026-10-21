@@ -61,7 +61,7 @@ class UkraineAlarmClient {
     }
 
     fun fetchUaRadarTargets(): List<RadarTarget> {
-        val url = "https://map.ukrainealarm.com/api/v2/data/targetsForMapsState/public?separateTracks=false"
+        val url = "https://map.ukrainealarm.com/api/centrifuge/map/fallback"
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", "Mozilla/5.0 (Android; Mobile; rv:128.0) Gecko/128.0 Firefox/128.0")
@@ -79,9 +79,14 @@ class UkraineAlarmClient {
         }
 
         val parsed = try {
-            gson.fromJson(responseBody, UaTargetsResponse::class.java)
+            val trimmed = responseBody.trim()
+            if (trimmed.startsWith("~3:") || (trimmed.startsWith("\"~3:") && trimmed.endsWith("\""))) {
+                CentrifugeMapDecoder.decode(trimmed)
+            } else {
+                gson.fromJson(responseBody, UaTargetsResponse::class.java)
+            }
         } catch (e: Exception) {
-            return emptyList()
+            null
         } ?: return emptyList()
 
         val isPublicEnabled = parsed.publicTargetsEnabled ?: true
@@ -94,24 +99,51 @@ class UkraineAlarmClient {
             pauseReason = null
         }
 
+        val nowSec = System.currentTimeMillis() / 1000.0
+
+        // Pre-initialize movement starting vector points (movement.from) for immediate target activation
+        val movementFrom = parsed.movement?.from
+        if (!movementFrom.isNullOrEmpty()) {
+            for (mItem in movementFrom) {
+                val mTid = mItem.trackId ?: continue
+                if (trackHistories.containsKey(mTid)) continue
+
+                val mDur = (mItem.movementDurationMs?.toDouble() ?: 20000.0) / 1000.0
+                val fromTs = nowSec - maxOf(5.0, minOf(60.0, mDur))
+                val mOx = mItem.markerOffsetX ?: 0.0
+                val mOy = mItem.markerOffsetY ?: 0.0
+                val (mLat, mLng) = if (mItem.lat != null && mItem.lng != null && mItem.lat != 0.0) {
+                    Pair(ThreatAnalyzer.safeRound(mItem.lat, 5), ThreatAnalyzer.safeRound(mItem.lng, 5))
+                } else {
+                    normalizedToLngLat(mItem.x + mOx, mItem.y + mOy)
+                }
+
+                val hist = TrackHistory()
+                hist.lastSeenSec = nowSec
+                hist.history.add(TrackPoint(fromTs, mLat, mLng))
+                trackHistories[mTid] = hist
+            }
+        }
+
+        // Prune stale tracks older than 75 seconds (~3.5 cycles)
+        trackHistories.entries.removeIf { nowSec - it.value.lastSeenSec > 75.0 }
+
         val items = when {
             parsed.targets != null && parsed.targets.isNotEmpty() -> parsed.targets
             parsed.movement?.from != null -> parsed.movement.from
             else -> emptyList()
         }
-        val nowSec = System.currentTimeMillis() / 1000.0
-
-        // Prune stale tracks older than 75 seconds (~3.5 cycles)
-        trackHistories.entries.removeIf { nowSec - it.value.lastSeenSec > 75.0 }
 
         val result = mutableListOf<RadarTarget>()
 
         for (item in items) {
             val tid = item.trackId ?: continue
+            val ox = item.markerOffsetX ?: 0.0
+            val oy = item.markerOffsetY ?: 0.0
             val (lat, lng) = if (item.lat != null && item.lng != null && item.lat != 0.0) {
                 Pair(ThreatAnalyzer.safeRound(item.lat, 5), ThreatAnalyzer.safeRound(item.lng, 5))
             } else {
-                normalizedToLngLat(item.x, item.y)
+                normalizedToLngLat(item.x + ox, item.y + oy)
             }
 
             var iconName = item.iconName?.trim() ?: ""
@@ -159,7 +191,7 @@ class UkraineAlarmClient {
             track.lastSeenSec = nowSec
 
             val lastPoint = track.history.lastOrNull()
-            if (lastPoint == null || (nowSec - lastPoint.timeSec >= 2.0) ||
+            if (lastPoint == null || (nowSec - lastPoint.timeSec >= 1.5) ||
                 ThreatAnalyzer.haversineKm(lastPoint.lat, lastPoint.lng, lat, lng) > 0.05
             ) {
                 track.history.add(TrackPoint(nowSec, lat, lng))
@@ -178,14 +210,14 @@ class UkraineAlarmClient {
                 val totalDt = lastP.timeSec - firstP.timeSec
                 totalDist = ThreatAnalyzer.haversineKm(firstP.lat, firstP.lng, lastP.lat, lastP.lng)
 
-                if (totalDt > 2.0 && totalDist >= 0.05) {
+                if (totalDt > 1.5 && totalDist >= 0.05) {
                     avgSpeedKmh = ThreatAnalyzer.safeRound((totalDist / totalDt) * 3600.0, 0)
                 }
 
                 val prevP = history[history.size - 2]
                 val dtInst = lastP.timeSec - prevP.timeSec
                 val distInst = ThreatAnalyzer.haversineKm(prevP.lat, prevP.lng, lastP.lat, lastP.lng)
-                if (dtInst > 1.0 && distInst >= 0.03) {
+                if (dtInst > 0.8 && distInst >= 0.03) {
                     instantSpeedKmh = ThreatAnalyzer.safeRound((distInst / dtInst) * 3600.0, 0)
                 }
 
@@ -205,7 +237,24 @@ class UkraineAlarmClient {
                 continue
             }
 
-            val pathCoords = history.map { listOf(it.lat, it.lng) }
+            // Optimized flight path: keep recent points with spatial threshold >= 120m
+            val recentHist = history.takeLast(50)
+            val flightPath = mutableListOf<List<Double>>()
+            var lastP: List<Double>? = null
+            for (p in recentHist) {
+                val pt = listOf(ThreatAnalyzer.safeRound(p.lat, 5), ThreatAnalyzer.safeRound(p.lng, 5))
+                if (lastP == null || ThreatAnalyzer.haversineKm(lastP[0], lastP[1], pt[0], pt[1]) >= 0.12) {
+                    flightPath.add(pt)
+                    lastP = pt
+                }
+            }
+            if (recentHist.isNotEmpty()) {
+                val lastHistPt = listOf(ThreatAnalyzer.safeRound(recentHist.last().lat, 5), ThreatAnalyzer.safeRound(recentHist.last().lng, 5))
+                if (flightPath.isEmpty() || flightPath.last() != lastHistPt) {
+                    flightPath.add(lastHistPt)
+                }
+            }
+
             val courseRounded = courseDeg?.let { ThreatAnalyzer.safeRound(it, 0) }
             val courseCompass = courseRounded?.let { ThreatAnalyzer.bearingToCompass(it) }
 
@@ -231,7 +280,7 @@ class UkraineAlarmClient {
                     instantSpeedKmh = instantSpeedKmh,
                     source = "ukrainealarm",
                     sourceLabel = "Офіційна карта «Повітряна тривога»",
-                    path = pathCoords,
+                    path = flightPath,
                     count = count,
                     sampleCount = history.size
                 )

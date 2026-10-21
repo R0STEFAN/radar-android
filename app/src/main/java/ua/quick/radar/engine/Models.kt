@@ -80,21 +80,29 @@ data class UaMovementItem(
     @SerializedName("y") val y: Double = 0.0,
     @SerializedName("lat") val lat: Double? = null,
     @SerializedName("lng") val lng: Double? = null,
+    @SerializedName("markerOffsetX") val markerOffsetX: Double? = 0.0,
+    @SerializedName("markerOffsetY") val markerOffsetY: Double? = 0.0,
     @SerializedName("heading") val heading: Double? = null,
     @SerializedName("formular") val formular: String? = null,
     @SerializedName("detectedType") val detectedType: String? = null,
     @SerializedName("iconName") val iconName: String? = null,
-    @SerializedName("currentCount") val currentCount: Int? = null
+    @SerializedName("iconScale") val iconScale: Double? = 1.0,
+    @SerializedName("currentCount") val currentCount: Int? = 1,
+    @SerializedName("movementDurationMs") val movementDurationMs: Long? = 20000L
 )
 
 data class UaMovementWrapper(
-    @SerializedName("from") val from: List<UaMovementItem>? = null
+    @SerializedName("from") val from: List<UaMovementItem>? = null,
+    @SerializedName("fromUpdatedAt") val fromUpdatedAt: Long? = null,
+    @SerializedName("startedAt") val startedAt: Long? = null
 )
 
 data class UaTargetsResponse(
     @SerializedName("publicTargetsEnabled") val publicTargetsEnabled: Boolean? = true,
     @SerializedName("targets") val targets: List<UaMovementItem>? = null,
-    @SerializedName("movement") val movement: UaMovementWrapper? = null
+    @SerializedName("movement") val movement: UaMovementWrapper? = null,
+    @SerializedName("serverTime") val serverTime: Long? = null,
+    @SerializedName("updatedAt") val updatedAt: Long? = null
 )
 
 data class UaAlertItem(
