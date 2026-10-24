@@ -72,22 +72,20 @@ class RadarEngineTest {
 
     @Test
     fun testCentrifugeEnvelopeUnwrapping() {
-        // Sample real ~5 frame captured from map.ukrainealarm.com
-        val uaClient = UkraineAlarmClient()
-        val req = okhttp3.Request.Builder()
-            .url("https://map.ukrainealarm.com/api/centrifuge/map/fallback")
-            .header("User-Agent", "Mozilla/5.0")
-            .header("Accept", "application/json")
-            .get()
-            .build()
-        val http = okhttp3.OkHttpClient()
-        val body = http.newCall(req).execute().use { it.body?.string() ?: "" }
-        assertTrue("Fallback response should not be empty", body.isNotEmpty())
+        // Real ~5: ChaCha20 frame captured from map.ukrainealarm.com wrapped in {"n":"~5:..."}
+        val realEnvelope = """{"n":"~5:-YwI0wrSjb4yHxm26Hm6C9H6sCfEf6dYbMcNNq-Dc2VkMfjf05jgkVXxvT-l6EXDh7fsKTLdI5yDCmMd6AriljzflvPHohFPTuy8xbdNd7mmEefpTWY6-hDeLmz0tNRrLw9zcvejetxdyvBXIwEXDRS5Xe4GETjUEwEJJg6fHl2CThRfr6ADigYW4kW3T7dvBg0IYMHvphn9Z2Nz_C28lqhNdL1qUCNJP0MazShpRFcTzWFwh49Jsf3WGBGXaZdfELdF74Cso_gAPyVK4bnBDiQfDnZgshipgG-dXw7OD9d0i7mUUIRFvbyuWwKGzOhpShVU77Zgzcs550_7VtJzagF2USgAUH6RpPmM5mpNwEYbDMwj99nsZLsNw-1YbIzuJWyg4aeH7OrpuL9YlUPs5aWo5mfC4HoxQRUUutI4x2C-9jF0k8DI3Vmmq68iAjP6bd3__68A-uUTmTVWeM5DtRBGnl1sl3RqLGVGA5gu4xJoLCTLQH42G4F6LdUAPBpyDtWHIsIJlfHSHJAV0WvfHBDXtLo0mgx_imjqQntvsIuGc9-696JBSeIQG-zv7tzBHtaepal-FzQOmzQMvxPikTMd_MRFbs3cKcvmpIWLgP2Zc3jhfbqmqvldS8pLRNy59w9mXm16X2bgU5BDhAM64sklloR9bjNOWzl8zi-9n0mi0IO19uBQnPztYpdw_ZBmAfRpoRcVzxYF8ea8qDSrxH0c4ZCwNb8mWtmTJTPNWgcO9kj2ai8SjGurlacXam1_4TITYE9YAoBO2gHhT0ZLkp9CLM98iINxgo2Q8zP33rqW7UBRlvTWRf_q8cFM9HoYfT_r6oFKokR_m7lH1oTpXFFWQOHnmKYiyAMN9bICAr8tMEESRlhS5N4Kcx401lYLF4XsIm3T-mSe_QXLbA9fNsj8SmlYMYUrH_6RysSGQznwqoJbmliZSjy4OpLY46Yqchxedfyca4QZixuDblW2oBTb_nwLguIUg4Jd5jApFFhWW-WhQIcciMoXqVjweJVUaW4wOI_demjSyli_XDSHYxF9vw_sHZxag8WYbidQQXFTxNRsYaffcsHrMHcAzzEKKQQAjKW7zU4bXlWES8Q7F05utYEAGNw7Qf-2Dsu8FRR36pj5AbOUEvMUHYIX-JQuEtYgpSInFDQ0bf55wn9ttFrtadAttetC_V_RG7EHtKrRTCLED1xHvoTimU250AfjvtIU6U_CV5zqBFAfFScUgacufU4ChohkOXIpaQ5tRC96RneCC0A4tHHSqq4sCDaBccEKkgnYek71OAknxTfncrvJne7TfZk6b0zxxap8Zzd2zhs-ubMoILewFEypBLUhsLiHYpoaveeDfD-dgBv2uAsXOMfXrC9e8Wc_00TGtqCNK_GwOdFAo9nRKZo_H0oHRDeOctQsUCNkCnI7VgfjOgXLVMfoi7zmgN11EPtwyQ84I5p4MCHWsX8f1BnMotrj1rMdeZGg1Aui9SLWp8R0NGCVsH25Mds9djgLLUOeXXX2t6l9T0HRhWkjYOdpuB_Mvo8zxnQmIXGXkFFtOXlDSLNc_xrU8FkcHriWQa47aNR-qZ5_tvZodJIQowjw-biEcKWUjcR603kZPgo76cpp28bjTlRpcxFOQLooAMPujTWPD1TM--GZiPDfbBYTG1GKD4hN7iaTRaR_Sl1Ozu4k7hMvTTP0qTnnw2HY0T3Yc7pazZQ7kvy5eW1uFZSMH8ZBeK1yY4kIpw4V4V9liU-GleQkzJPwspFwDSyHRglzHmjSNFyu5KPeWSGVRNWUo0Bm02oyROrGF_o6smySfEmc-Y_2iGrf2HhQh5FhZdx6_juoAAVbKrbaTZOZ7eGSn4cD7TbrVRjupqRK0BfL3_pgyMtY72hVCXpKPnUSLAoMU3hwwXiQAqs-5_eybDKoVBTrk-tHaRRAaT1as4QDGqLbUeWQSP-sb0igRisXDVfyOZ1UKHMSJep9udMFz82y1fPP5Ls9S2Inv8BQ34L5RjZ5KyQ0XlYUC5ohAxRPEdpzMo9kK3shB8rNLIpwdMMaZje1bHEmYoJ3WRtSK653HQCUNicUVKJYDfY4OHT3RD6Xygj1dstZqXIJcp3W-EwKZjWQltbPnQL1IFqkkNFVExyIIoJdVr_ro7HfDD15qwdt-zBz84N8gPVKHhOHb3QZ7Q9nE2mMFjenQOGNjwA7-7y3v3bxOxYDiAGV3aHHqig7TgH9YjEbSX2R8aCy-lQlPHlu-kAmbFpPqtv4Ezdaijz9RbpmdOHyiTDQQevvyP8vZJ8hKVBRoTT4pV1o4P-ue_YFSwFy2n8isfFYAyxQ6bSz_D6rq1n4Udq9C8lX0jeA"}"""
 
-        val decoded = CentrifugeMapDecoder.decode(body)
-        assertNotNull("CentrifugeMapDecoder must decode live fallback frame", decoded)
-        assertNotNull("Decoded serverTime must be present", decoded!!.serverTime)
-        assertTrue("Decoded serverTime must be > 1700000000000", (decoded.serverTime ?: 0L) > 1700000000000L)
+        val decoded = CentrifugeMapDecoder.decode(realEnvelope)
+        assertNotNull("CentrifugeMapDecoder must decode real ~5: ChaCha20 frame", decoded)
+        assertTrue("Decoded serverTime must be > 1700000000000", (decoded!!.serverTime ?: 0L) > 1700000000000L)
+        assertFalse("Decoded targets must not be empty", decoded.targets.isNullOrEmpty())
+        val firstTarget = decoded.targets!!.first()
+        assertNotNull(firstTarget.trackId)
+        assertTrue(firstTarget.x in 0.0..1.0)
+        assertTrue(firstTarget.y in 0.0..1.0)
+        val (lat, lng) = UkraineAlarmClient.normalizedToLngLat(firstTarget.x, firstTarget.y)
+        assertTrue("Projected latitude must be inside Ukraine region", lat in 44.0..53.0)
+        assertTrue("Projected longitude must be inside Ukraine region", lng in 22.0..41.0)
     }
 
     @Test

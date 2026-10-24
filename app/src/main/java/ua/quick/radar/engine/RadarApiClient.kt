@@ -143,7 +143,8 @@ class RadarApiClient {
         val sha512 = MessageDigest.getInstance("SHA-512")
         val d1 = sha512.digest(seedMaterial)
         val d2 = MessageDigest.getInstance("SHA-512").digest(seedMaterial + ":ext".toByteArray(StandardCharsets.UTF_8))
-        val digest = d1 + d2
+        val d3 = MessageDigest.getInstance("SHA-512").digest(seedMaterial + ":ext2".toByteArray(StandardCharsets.UTF_8))
+        val digest = d1 + d2 + d3
 
         val sb = StringBuilder(143)
         for (i in 0 until 22) {
