@@ -1057,6 +1057,41 @@
         </button>
       </div>
 
+      <!-- Version & In-App GitHub Updater Card -->
+      <div class="settings-card">
+        <div class="card-top">
+          <div class="card-title-group">
+            <span style="font-size: 16px;">📲</span>
+            <div>
+              <div class="card-title">Версія та оновлення</div>
+              <div class="card-subtitle">Поточна версія: <b id="currentAppVersionLabel" style="color: #38bdf8;">v1.4.5</b></div>
+            </div>
+          </div>
+          <span id="updateStatusBadge" style="font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 10px; background: rgba(255,255,255,0.08); color: #94a3b8;">GitHub</span>
+        </div>
+
+        <div id="updateInfoBox" style="font-size: 11px; color: var(--text-muted); line-height: 1.4; display: none; background: rgba(0,0,0,0.25); padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);"></div>
+
+        <div id="updateProgressContainer" style="display: none; flex-direction: column; gap: 4px;">
+          <div style="display: flex; justify-content: space-between; font-size: 11px; color: #7dd3fc;">
+            <span id="updateProgressLabel">Завантаження APK...</span>
+            <b id="updateProgressPct">0%</b>
+          </div>
+          <div class="timer-progress-wrap" style="margin: 0; height: 6px;">
+            <div id="updateProgressFill" class="timer-progress-fill" style="width: 0%; transition: width 0.2s ease;"></div>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 8px;">
+          <button id="btnCheckUpdate" class="btn-block" onclick="checkAppUpdate()" style="flex: 1;">
+            <span>🔍 Перевірити оновлення</span>
+          </button>
+          <button id="btnInstallUpdate" class="btn-block" onclick="startAppUpdate()" style="flex: 1; display: none; background: rgba(16, 185, 129, 0.2); border-color: rgba(16, 185, 129, 0.5); color: #34d399;">
+            <span>⬇️ Оновити зараз</span>
+          </button>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -1133,6 +1168,7 @@
     // --- Init ---
     window.addEventListener("DOMContentLoaded", () => {
       loadSettingsFromNative();
+      initAppVersionUI();
       initMap();
       renderUserPosition();
       updateRadarData();
@@ -2074,6 +2110,165 @@
         appSettings.sectorSoundUri = uri;
       }
       applySettingsToUI();
+    };
+
+    // --- In-App GitHub Updater ---
+    let latestUpdateDownloadUrl = "";
+    let isDownloadingUpdate = false;
+
+    function initAppVersionUI() {
+      const ver = callBridge("getAppVersion");
+      const lbl = document.getElementById("currentAppVersionLabel");
+      if (ver && lbl) {
+        lbl.textContent = `v${ver}`;
+      }
+    }
+
+    function checkAppUpdate() {
+      if (isDownloadingUpdate) return;
+      const badge = document.getElementById("updateStatusBadge");
+      const infoBox = document.getElementById("updateInfoBox");
+      const btnCheck = document.getElementById("btnCheckUpdate");
+      const btnInstall = document.getElementById("btnInstallUpdate");
+
+      if (badge) {
+        badge.textContent = "Перевірка...";
+        badge.style.background = "rgba(56, 189, 248, 0.15)";
+        badge.style.color = "#7dd3fc";
+      }
+      if (btnCheck) btnCheck.disabled = true;
+      if (btnInstall) btnInstall.style.display = "none";
+      if (infoBox) {
+        infoBox.style.display = "block";
+        infoBox.textContent = "Перевірка останнього релізу на GitHub...";
+      }
+
+      callBridge("checkUpdateFromGitHub");
+    }
+
+    window.onUpdateCheckResult = function(rawJson) {
+      const badge = document.getElementById("updateStatusBadge");
+      const infoBox = document.getElementById("updateInfoBox");
+      const btnCheck = document.getElementById("btnCheckUpdate");
+      const btnInstall = document.getElementById("btnInstallUpdate");
+
+      if (btnCheck) btnCheck.disabled = false;
+
+      let res = null;
+      try {
+        res = typeof rawJson === "string" ? JSON.parse(rawJson) : rawJson;
+      } catch (e) {
+        res = null;
+      }
+
+      if (!res || res.status !== "ok") {
+        if (badge) {
+          badge.textContent = "Помилка";
+          badge.style.background = "rgba(239, 68, 68, 0.2)";
+          badge.style.color = "#f87171";
+        }
+        if (infoBox) {
+          infoBox.style.display = "block";
+          infoBox.textContent = (res && res.message) ? res.message : "Не вдалося перевірити оновлення на GitHub.";
+        }
+        return;
+      }
+
+      const curVer = res.currentVersion || "";
+      const latVer = res.latestVersion || "";
+      const lbl = document.getElementById("currentAppVersionLabel");
+      if (curVer && lbl) lbl.textContent = `v${curVer}`;
+
+      if (res.hasUpdate && res.downloadUrl) {
+        latestUpdateDownloadUrl = res.downloadUrl;
+        if (badge) {
+          badge.textContent = `Доступна v${latVer}`;
+          badge.style.background = "rgba(16, 185, 129, 0.2)";
+          badge.style.color = "#34d399";
+        }
+        if (infoBox) {
+          const sizeTxt = res.sizeMb ? ` (${res.sizeMb} МБ)` : "";
+          infoBox.style.display = "block";
+          infoBox.innerHTML = `<b style="color:#34d399;">🎉 Доступна нова версія v${latVer}${sizeTxt}!</b><br>Натисніть «Оновити зараз», щоб завантажити та встановити APK поверх поточної програми.`;
+        }
+        if (btnInstall) {
+          btnInstall.style.display = "flex";
+          btnInstall.innerHTML = `<span>⬇️ Оновити до v${latVer}</span>`;
+        }
+      } else {
+        latestUpdateDownloadUrl = res.downloadUrl || "";
+        if (badge) {
+          badge.textContent = "Актуальна";
+          badge.style.background = "rgba(16, 185, 129, 0.15)";
+          badge.style.color = "#34d399";
+        }
+        if (infoBox) {
+          infoBox.style.display = "block";
+          infoBox.innerHTML = `✅ У вас встановлено найновішу версію (<b>v${curVer}</b>).`;
+        }
+        if (btnInstall) {
+          btnInstall.style.display = "none";
+        }
+      }
+    };
+
+    function startAppUpdate() {
+      if (!latestUpdateDownloadUrl || isDownloadingUpdate) return;
+      isDownloadingUpdate = true;
+
+      const progWrap = document.getElementById("updateProgressContainer");
+      const progFill = document.getElementById("updateProgressFill");
+      const progPct = document.getElementById("updateProgressPct");
+      const progLbl = document.getElementById("updateProgressLabel");
+      const btnInstall = document.getElementById("btnInstallUpdate");
+      const btnCheck = document.getElementById("btnCheckUpdate");
+
+      if (btnInstall) btnInstall.disabled = true;
+      if (btnCheck) btnCheck.disabled = true;
+      if (progWrap) progWrap.style.display = "flex";
+      if (progFill) progFill.style.width = "0%";
+      if (progPct) progPct.textContent = "0%";
+      if (progLbl) progLbl.textContent = "Завантаження APK з GitHub...";
+
+      callBridge("downloadAndInstallApk", latestUpdateDownloadUrl);
+    }
+
+    window.onUpdateDownloadProgress = function(pct) {
+      const progFill = document.getElementById("updateProgressFill");
+      const progPct = document.getElementById("updateProgressPct");
+      if (progFill) progFill.style.width = `${pct}%`;
+      if (progPct) progPct.textContent = `${pct}%`;
+    };
+
+    window.onUpdateDownloadFinished = function() {
+      isDownloadingUpdate = false;
+      const progFill = document.getElementById("updateProgressFill");
+      const progPct = document.getElementById("updateProgressPct");
+      const progLbl = document.getElementById("updateProgressLabel");
+      const btnInstall = document.getElementById("btnInstallUpdate");
+      const btnCheck = document.getElementById("btnCheckUpdate");
+
+      if (progFill) progFill.style.width = "100%";
+      if (progPct) progPct.textContent = "100%";
+      if (progLbl) progLbl.textContent = "✅ Завантажено! Запуск встановлення...";
+      if (btnInstall) btnInstall.disabled = false;
+      if (btnCheck) btnCheck.disabled = false;
+    };
+
+    window.onUpdateDownloadError = function(errMsg) {
+      isDownloadingUpdate = false;
+      const progWrap = document.getElementById("updateProgressContainer");
+      const infoBox = document.getElementById("updateInfoBox");
+      const btnInstall = document.getElementById("btnInstallUpdate");
+      const btnCheck = document.getElementById("btnCheckUpdate");
+
+      if (progWrap) progWrap.style.display = "none";
+      if (btnInstall) btnInstall.disabled = false;
+      if (btnCheck) btnCheck.disabled = false;
+      if (infoBox) {
+        infoBox.style.display = "block";
+        infoBox.innerHTML = `<span style="color:#f87171;">⚠️ Помилка завантаження: ${errMsg}</span>`;
+      }
     };
   </script>
 </body>

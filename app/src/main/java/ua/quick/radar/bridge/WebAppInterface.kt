@@ -7,20 +7,32 @@ import android.webkit.JavascriptInterface
 import android.widget.Toast
 import androidx.lifecycle.lifecycleScope
 import com.google.gson.Gson
+import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import ua.quick.radar.MainActivity
 import ua.quick.radar.R
 import ua.quick.radar.engine.AppSettings
 import ua.quick.radar.engine.DeepStateClient
 import ua.quick.radar.engine.ThreatAnalyzer
 import ua.quick.radar.service.RadarForegroundService
+import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.TimeUnit
 
 class WebAppInterface(private val activity: MainActivity) {
 
     private val gson = Gson()
     private val prefs = activity.getSharedPreferences(RadarForegroundService.PREFS_NAME, Context.MODE_PRIVATE)
     private val deepStateClient = DeepStateClient()
+    private val updateHttpClient = OkHttpClient.Builder()
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .build()
 
     @JavascriptInterface
     fun getSettings(): String {
@@ -218,6 +230,168 @@ class WebAppInterface(private val activity: MainActivity) {
                     activity.webView.evaluateJavascript("window.onDeepStateLoaded && window.onDeepStateLoaded()", null)
                 } else {
                     activity.webView.evaluateJavascript("window.onDeepStateFailed && window.onDeepStateFailed()", null)
+                }
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun getAppVersion(): String {
+        return try {
+            val pInfo = activity.packageManager.getPackageInfo(activity.packageName, 0)
+            pInfo.versionName ?: "1.4.4"
+        } catch (e: Exception) {
+            "1.4.4"
+        }
+    }
+
+    private fun isNewerVersion(current: String, latest: String): Boolean {
+        val cParts = current.removePrefix("v").removePrefix("V").trim().split(".").map { it.toIntOrNull() ?: 0 }
+        val lParts = latest.removePrefix("v").removePrefix("V").trim().split(".").map { it.toIntOrNull() ?: 0 }
+        val maxLen = maxOf(cParts.size, lParts.size)
+        for (i in 0 until maxLen) {
+            val c = cParts.getOrElse(i) { 0 }
+            val l = lParts.getOrElse(i) { 0 }
+            if (l > c) return true
+            if (l < c) return false
+        }
+        return false
+    }
+
+    @JavascriptInterface
+    fun checkUpdateFromGitHub() {
+        activity.lifecycleScope.launch(Dispatchers.IO) {
+            val currentVer = getAppVersion()
+            try {
+                val request = Request.Builder()
+                    .url("https://api.github.com/repos/R0STEFAN/radar-android/releases/latest")
+                    .header("Accept", "application/vnd.github+json")
+                    .header("User-Agent", "FlugerRadar-Android/$currentVer")
+                    .get()
+                    .build()
+
+                updateHttpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        val errRes = mapOf("status" to "error", "message" to "Помилка GitHub API (HTTP ${response.code})")
+                        val jsonOut = gson.toJson(errRes)
+                        activity.runOnUiThread {
+                            activity.webView.evaluateJavascript("window.onUpdateCheckResult && window.onUpdateCheckResult(${gson.toJson(jsonOut)})", null)
+                        }
+                        return@use
+                    }
+
+                    val bodyStr = response.body?.string() ?: "{}"
+                    val root = JsonParser.parseString(bodyStr).asJsonObject
+                    val tagName = root.get("tag_name")?.asString ?: ""
+                    val latestVer = tagName.removePrefix("v").removePrefix("V").trim()
+                    val releaseNotes = root.get("body")?.asString ?: ""
+
+                    var apkUrl = ""
+                    var apkSizeMb = 0.0
+                    val assets = root.getAsJsonArray("assets")
+                    if (assets != null) {
+                        for (el in assets) {
+                            val asset = el.asJsonObject
+                            val name = asset.get("name")?.asString ?: ""
+                            if (name.endsWith(".apk", ignoreCase = true)) {
+                                apkUrl = asset.get("browser_download_url")?.asString ?: ""
+                                val sizeBytes = asset.get("size")?.asLong ?: 0L
+                                apkSizeMb = ThreatAnalyzer.safeRound(sizeBytes / (1024.0 * 1024.0), 1)
+                                break
+                            }
+                        }
+                    }
+
+                    val hasUpdate = isNewerVersion(currentVer, latestVer) && apkUrl.isNotEmpty()
+                    val resMap = mapOf(
+                        "status" to "ok",
+                        "currentVersion" to currentVer,
+                        "latestVersion" to latestVer,
+                        "hasUpdate" to hasUpdate,
+                        "downloadUrl" to apkUrl,
+                        "sizeMb" to apkSizeMb,
+                        "notes" to releaseNotes
+                    )
+                    val jsonOut = gson.toJson(resMap)
+                    activity.runOnUiThread {
+                        activity.webView.evaluateJavascript("window.onUpdateCheckResult && window.onUpdateCheckResult(${gson.toJson(jsonOut)})", null)
+                    }
+                }
+            } catch (e: Exception) {
+                val errRes = mapOf("status" to "error", "message" to "Помилка мережі: ${e.localizedMessage ?: "невідомо"}")
+                val jsonOut = gson.toJson(errRes)
+                activity.runOnUiThread {
+                    activity.webView.evaluateJavascript("window.onUpdateCheckResult && window.onUpdateCheckResult(${gson.toJson(jsonOut)})", null)
+                }
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun downloadAndInstallApk(downloadUrl: String) {
+        if (downloadUrl.isBlank()) return
+        activity.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val request = Request.Builder()
+                    .url(downloadUrl)
+                    .header("User-Agent", "FlugerRadar-Android/${getAppVersion()}")
+                    .get()
+                    .build()
+
+                updateHttpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        activity.runOnUiThread {
+                            activity.webView.evaluateJavascript("window.onUpdateDownloadError && window.onUpdateDownloadError('Помилка завантаження HTTP ${response.code}')", null)
+                        }
+                        return@use
+                    }
+
+                    val body = response.body ?: run {
+                        activity.runOnUiThread {
+                            activity.webView.evaluateJavascript("window.onUpdateDownloadError && window.onUpdateDownloadError('Порожній файл відповіді')", null)
+                        }
+                        return@use
+                    }
+
+                    val totalBytes = body.contentLength()
+                    val updatesDir = File(activity.cacheDir, "updates")
+                    if (!updatesDir.exists()) updatesDir.mkdirs()
+                    val apkFile = File(updatesDir, "fluger-radar-update.apk")
+                    if (apkFile.exists()) apkFile.delete()
+
+                    body.byteStream().use { input ->
+                        FileOutputStream(apkFile).use { output ->
+                            val buffer = ByteArray(8 * 1024)
+                            var bytesRead: Int
+                            var downloadedBytes = 0L
+                            var lastReportedPct = -1
+
+                            while (input.read(buffer).also { bytesRead = it } != -1) {
+                                output.write(buffer, 0, bytesRead)
+                                downloadedBytes += bytesRead
+                                if (totalBytes > 0) {
+                                    val pct = ((downloadedBytes * 100L) / totalBytes).toInt().coerceIn(0, 100)
+                                    if (pct != lastReportedPct && (pct % 2 == 0 || pct == 100)) {
+                                        lastReportedPct = pct
+                                        activity.runOnUiThread {
+                                            activity.webView.evaluateJavascript("window.onUpdateDownloadProgress && window.onUpdateDownloadProgress($pct)", null)
+                                        }
+                                    }
+                                }
+                            }
+                            output.flush()
+                        }
+                    }
+
+                    activity.runOnUiThread {
+                        activity.webView.evaluateJavascript("window.onUpdateDownloadFinished && window.onUpdateDownloadFinished()", null)
+                        activity.promptInstallApk(apkFile)
+                    }
+                }
+            } catch (e: Exception) {
+                val msg = (e.localizedMessage ?: "Помилка з'єднання").replace("'", "")
+                activity.runOnUiThread {
+                    activity.webView.evaluateJavascript("window.onUpdateDownloadError && window.onUpdateDownloadError('$msg')", null)
                 }
             }
         }

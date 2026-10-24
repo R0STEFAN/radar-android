@@ -23,17 +23,33 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import ua.quick.radar.bridge.WebAppInterface
 import ua.quick.radar.engine.ThreatAnalyzer
 import ua.quick.radar.service.RadarForegroundService
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
     lateinit var webView: WebView
     private var pendingSoundPickerType: String? = null
+    private var pendingUpdateApkFile: File? = null
+
+    private val installPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        val apkFile = pendingUpdateApkFile
+        if (apkFile != null && apkFile.exists()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && packageManager.canRequestPackageInstalls()) {
+                launchApkInstallerIntent(apkFile)
+            } else {
+                Toast.makeText(this, "⚠️ Надайте дозвіл на встановлення невідомих додатків для оновлення", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -249,6 +265,41 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             Toast.makeText(this, "📍 Позицію зафіксовано по GPS: ${ThreatAnalyzer.safeRound(lat, 4)}, ${ThreatAnalyzer.safeRound(lng, 4)}", Toast.LENGTH_SHORT).show()
             webView.evaluateJavascript("window.onGpsLocationUpdated && window.onGpsLocationUpdated($lat, $lng)", null)
+        }
+    }
+
+    fun promptInstallApk(apkFile: File) {
+        pendingUpdateApkFile = apkFile
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            Toast.makeText(this, "Надайте дозвіл на встановлення оновлення Флюгер Радар", Toast.LENGTH_LONG).show()
+            val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            try {
+                installPermissionLauncher.launch(intent)
+            } catch (e: Exception) {
+                launchApkInstallerIntent(apkFile)
+            }
+        } else {
+            launchApkInstallerIntent(apkFile)
+        }
+    }
+
+    private fun launchApkInstallerIntent(apkFile: File) {
+        try {
+            val apkUri = FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                apkFile
+            )
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(installIntent)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Помилка запуску встановлення: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 }
