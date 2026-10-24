@@ -41,8 +41,10 @@ data class ClassificationResult(
 
 data class AlertAssessment(
     val isCritical: Boolean,
+    val isAlertZone: Boolean = false,
     val isSector: Boolean,
     val criticalTargets: List<RadarTarget>,
+    val alertZoneTargets: List<RadarTarget> = emptyList(),
     val sectorTargets: List<RadarTarget>,
     val summaryText: String
 )
@@ -69,9 +71,22 @@ data class AppSettings(
 data class RadarPayload(
     val lat: Double,
     val lng: Double,
-    val fcmToken: String = "quick_radar_fcm_token_local",
-    val googleToken: String = "quick_radar_google_token_local",
+    val fcmToken: String = "dK9_x8LmR2qP5vN1wZ3bC7:APA91bF4x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7",
+    val googleToken: String? = null,
     val background: Boolean = false
+)
+
+data class UaPrediction(
+    @SerializedName("fromX") val fromX: Double = 0.0,
+    @SerializedName("fromY") val fromY: Double = 0.0,
+    @SerializedName("toX") val toX: Double = 0.0,
+    @SerializedName("toY") val toY: Double = 0.0,
+    @SerializedName("startedAt") val startedAt: Long? = null,
+    @SerializedName("endsAt") val endsAt: Long? = null,
+    @SerializedName("fromMarkerOffsetX") val fromMarkerOffsetX: Double? = null,
+    @SerializedName("fromMarkerOffsetY") val fromMarkerOffsetY: Double? = null,
+    @SerializedName("toMarkerOffsetX") val toMarkerOffsetX: Double? = null,
+    @SerializedName("toMarkerOffsetY") val toMarkerOffsetY: Double? = null
 )
 
 data class UaMovementItem(
@@ -88,7 +103,8 @@ data class UaMovementItem(
     @SerializedName("iconName") val iconName: String? = null,
     @SerializedName("iconScale") val iconScale: Double? = 1.0,
     @SerializedName("currentCount") val currentCount: Int? = 1,
-    @SerializedName("movementDurationMs") val movementDurationMs: Long? = 20000L
+    @SerializedName("movementDurationMs") val movementDurationMs: Long? = 20000L,
+    @SerializedName("prediction") val prediction: UaPrediction? = null
 )
 
 data class UaMovementWrapper(

@@ -287,6 +287,7 @@ object ThreatAnalyzer {
         val sectRadius = settings.sectorRadiusKm
 
         val criticalList = mutableListOf<RadarTarget>()
+        val alertZoneList = mutableListOf<RadarTarget>()
         val sectorList = mutableListOf<RadarTarget>()
 
         for (target in targets) {
@@ -315,13 +316,17 @@ object ThreatAnalyzer {
             target.isHeadingToUser = isHeadingToUser
             target.timeToUserMin = etaMin
 
-            // Critical status strictly triggers ONLY if inside critical radius AND heading directly to user (<= 20°)
+            // Critical incoming status strictly triggers if inside critical radius AND heading directly to user (<= 20°)
             val isCriticalIncoming = (dist <= critRadius) && isHeadingToUser
             target.isCriticalIncoming = isCriticalIncoming
 
-            if (settings.criticalEnabled && isCriticalIncoming) {
+            if (isCriticalIncoming) {
                 criticalList.add(target)
-            } else if (settings.sectorEnabled && dist <= sectRadius) {
+                alertZoneList.add(target)
+            } else if (dist <= critRadius) {
+                alertZoneList.add(target)
+                sectorList.add(target)
+            } else if (dist <= sectRadius) {
                 sectorList.add(target)
             }
         }
@@ -332,18 +337,25 @@ object ThreatAnalyzer {
                 val etaText = closest?.timeToUserMin?.let { " (~${it.toInt()} хв)" } ?: ""
                 "🚨 КУРС НА ВАС! ${closest?.category ?: "Ціль"} за ${closest?.distanceKm?.toInt() ?: 0} км$etaText"
             }
+            alertZoneList.isNotEmpty() -> {
+                val count = alertZoneList.size
+                val closest = alertZoneList.minByOrNull { it.distanceKm ?: 999.0 }
+                "🔴 У радіусі сповіщення (${critRadius.toInt()} км): $count ${if (count == 1) "ціль" else if (count in 2..4) "цілі" else "цілей"} (найближча ${closest?.distanceKm?.toInt() ?: 0} км)"
+            }
             sectorList.isNotEmpty() -> {
                 val count = sectorList.size
                 val closest = sectorList.minByOrNull { it.distanceKm ?: 999.0 }
-                "🟡 У секторі: $count цілей (найближча ${closest?.distanceKm?.toInt() ?: 0} км)"
+                "🟡 У секторі огляду (${sectRadius.toInt()} км): $count ${if (count == 1) "ціль" else if (count in 2..4) "цілі" else "цілей"} (найближча ${closest?.distanceKm?.toInt() ?: 0} км)"
             }
             else -> "🟢 Небо чисте в радіусі моніторингу"
         }
 
         return AlertAssessment(
-            isCritical = criticalList.isNotEmpty() && settings.criticalEnabled,
-            isSector = sectorList.isNotEmpty() && settings.sectorEnabled,
+            isCritical = criticalList.isNotEmpty(),
+            isAlertZone = alertZoneList.isNotEmpty(),
+            isSector = sectorList.isNotEmpty() || alertZoneList.isNotEmpty(),
             criticalTargets = criticalList,
+            alertZoneTargets = alertZoneList,
             sectorTargets = sectorList,
             summaryText = summary
         )

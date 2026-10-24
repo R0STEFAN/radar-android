@@ -478,8 +478,13 @@ class RadarForegroundService : Service() {
                 val closest = assessment.criticalTargets.minByOrNull { it.distanceKm ?: 999.0 }
                 "🚨 КУРС НА ВАС! ${closest?.category ?: "Ціль"} (${closest?.distanceKm?.toInt() ?: 0} км)"
             }
+            assessment.isAlertZone -> {
+                val closest = assessment.alertZoneTargets.minByOrNull { it.distanceKm ?: 999.0 }
+                "🔴 У червоному радіусі (${settings.criticalRadiusKm.toInt()} км): ${assessment.alertZoneTargets.size} цілей (найближча ${closest?.distanceKm?.toInt() ?: 0} км)"
+            }
             assessment.isSector -> {
-                "🟡 У секторі ${targets.size} цілей (${settings.sectorRadiusKm.toInt()} км)"
+                val closest = assessment.sectorTargets.minByOrNull { it.distanceKm ?: 999.0 }
+                "🟡 У секторі огляду (${settings.sectorRadiusKm.toInt()} км): ${assessment.sectorTargets.size} цілей (найближча ${closest?.distanceKm?.toInt() ?: 0} км)"
             }
             else -> "🟢 Сектор чистий. Відстеження активне."
         }

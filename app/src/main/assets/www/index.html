@@ -82,6 +82,12 @@
       animation: pulse-border 1.5s infinite alternate;
     }
 
+    .hud-banner.alert-zone {
+      border-color: var(--red-alert);
+      background: rgba(45, 14, 18, 0.96);
+      box-shadow: 0 0 20px var(--red-glow);
+    }
+
     .hud-banner.sector {
       border-color: var(--yellow-alert);
       background: rgba(45, 34, 12, 0.96);
@@ -113,11 +119,13 @@
       animation: ripple 2s infinite ease-out;
     }
 
-    .critical .status-beacon {
+    .critical .status-beacon,
+    .alert-zone .status-beacon {
       background: var(--red-alert);
       box-shadow: 0 0 12px var(--red-alert);
     }
-    .critical .status-beacon::after {
+    .critical .status-beacon::after,
+    .alert-zone .status-beacon::after {
       border-color: var(--red-alert);
     }
 
@@ -1099,12 +1107,13 @@
       if (!name) return (typeof EMBEDDED_ICONS !== 'undefined' ? EMBEDDED_ICONS['ic_air_threat_combined_white'] : 'icons/ic_air_threat_combined_white.svg');
       const clean = String(name).replace(/\.svg$/i, "").trim().toLowerCase();
       if (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS[clean]) return EMBEDDED_ICONS[clean];
+      if (clean.includes("banderol") || clean.includes("бандероль")) return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_banderol"]) ? EMBEDDED_ICONS["ic_banderol"] : "icons/ic_banderol.svg";
       if (clean.includes("bomb") || clean.includes("kab") || clean.includes("каб")) return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_airbomb"]) ? EMBEDDED_ICONS["ic_airbomb"] : "icons/ic_airbomb.svg";
       if (clean.includes("jet") || clean.includes("реакт")) return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_shahed_jet"]) ? EMBEDDED_ICONS["ic_shahed_jet"] : "icons/ic_shahed_jet.svg";
       if (clean.includes("shahed") || clean.includes("шахед") || clean.includes("дрон")) return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_shahed"]) ? EMBEDDED_ICONS["ic_shahed"] : "icons/ic_shahed.svg";
       if (clean.includes("missile") || clean.includes("ракета")) return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_missile"]) ? EMBEDDED_ICONS["ic_missile"] : "icons/ic_missile.svg";
       if (clean.includes("ballistic") || clean.includes("баліст")) return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_ballistic"]) ? EMBEDDED_ICONS["ic_ballistic"] : "icons/ic_ballistic.svg";
-      if (clean.includes("drone") || clean.includes("розвід")) return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_drone"]) ? EMBEDDED_ICONS["ic_drone"] : "icons/ic_drone.svg";
+      if (clean.includes("drone") || clean.includes("розвід") || clean.includes("lancet") || clean.includes("zala") || clean.includes("supercam")) return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_drone"]) ? EMBEDDED_ICONS["ic_drone"] : "icons/ic_drone.svg";
       return (typeof EMBEDDED_ICONS !== 'undefined' && EMBEDDED_ICONS["ic_air_threat_combined_white"]) ? EMBEDDED_ICONS["ic_air_threat_combined_white"] : "icons/ic_air_threat_combined_white.svg";
     }
 
@@ -1915,19 +1924,49 @@
       const title = document.getElementById("statusTitle");
       const desc = document.getElementById("statusDesc");
 
-      banner.classList.remove("critical", "sector");
+      banner.classList.remove("critical", "alert-zone", "sector");
 
-      if (assessment && assessment.isCritical) {
+      const critRadius = appSettings.criticalRadiusKm || 40;
+      const sectRadius = appSettings.sectorRadiusKm || 45;
+
+      const list = Array.isArray(targets) ? targets : [];
+      const criticalIncomingTargets = list.filter(t => t.distanceKm !== null && t.distanceKm !== undefined && t.distanceKm <= critRadius && !!t.isCriticalIncoming);
+      const alertZoneTargets = list.filter(t => t.distanceKm !== null && t.distanceKm !== undefined && t.distanceKm <= critRadius);
+      const sectorTargets = list.filter(t => t.distanceKm !== null && t.distanceKm !== undefined && t.distanceKm <= sectRadius);
+
+      if ((assessment && assessment.isCritical) || criticalIncomingTargets.length > 0) {
         banner.classList.add("critical");
         title.textContent = "🚨 НЕБЕЗПЕКА: КУРС НА ВАС!";
-        desc.textContent = assessment.summaryText;
-      } else if (assessment && assessment.isSector) {
+        if (assessment && assessment.isCritical && assessment.summaryText) {
+          desc.textContent = assessment.summaryText;
+        } else {
+          const closest = criticalIncomingTargets.reduce((min, t) => (!min || t.distanceKm < min.distanceKm) ? t : min, null);
+          const etaText = (closest && closest.timeToUserMin) ? ` (~${Math.round(closest.timeToUserMin)} хв)` : "";
+          desc.textContent = `🚨 КУРС НА ВАС! ${closest ? closest.category : 'Ціль'} за ${closest ? Math.round(closest.distanceKm) : 0} км${etaText}`;
+        }
+      } else if ((assessment && assessment.isAlertZone) || alertZoneTargets.length > 0) {
+        banner.classList.add("alert-zone");
+        title.textContent = "🔴 ЗАГРОЗА В РАДІУСІ СПОВІЩЕННЯ";
+        if (assessment && assessment.isAlertZone && assessment.summaryText) {
+          desc.textContent = assessment.summaryText;
+        } else {
+          const count = alertZoneTargets.length;
+          const closest = alertZoneTargets.reduce((min, t) => (!min || t.distanceKm < min.distanceKm) ? t : min, null);
+          desc.textContent = `🔴 У радіусі ${critRadius} км: ${count} ціл. (найближча ${closest ? Math.round(closest.distanceKm) : 0} км)`;
+        }
+      } else if ((assessment && assessment.isSector) || sectorTargets.length > 0) {
         banner.classList.add("sector");
         title.textContent = "🟡 СПОСТЕРЕЖЕННЯ: ЦІЛІ В СЕКТОРІ";
-        desc.textContent = assessment.summaryText;
+        if (assessment && assessment.isSector && assessment.summaryText) {
+          desc.textContent = assessment.summaryText;
+        } else {
+          const count = sectorTargets.length;
+          const closest = sectorTargets.reduce((min, t) => (!min || t.distanceKm < min.distanceKm) ? t : min, null);
+          desc.textContent = `🟡 У секторі (${sectRadius} км): ${count} ціл. (найближча ${closest ? Math.round(closest.distanceKm) : 0} км)`;
+        }
       } else {
         title.textContent = "🟢 СЕКТОР ЧИСТИЙ";
-        desc.textContent = `Моніторинг активний (${appSettings.sectorRadiusKm} км)`;
+        desc.textContent = `Моніторинг активний (${sectRadius} км)`;
       }
     }
 

@@ -1,7 +1,7 @@
 package ua.quick.radar.engine
 
 import android.util.Base64
-import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -31,7 +31,7 @@ class RadarApiClient {
         .readTimeout(10, TimeUnit.SECONDS)
         .build()
 
-    private val gson = Gson()
+    private val gson = GsonBuilder().serializeNulls().create()
 
     // Persistent multi-sweep track storage (matching fluger_server.py)
     data class InternalTrack(
@@ -85,8 +85,8 @@ class RadarApiClient {
         val payload = mapOf(
             "lat" to lat,
             "lng" to lng,
-            "fcmToken" to "quick_radar_fcm_token_local",
-            "googleToken" to "quick_radar_google_token_local",
+            "fcmToken" to "dK9_x8LmR2qP5vN1wZ3bC7:APA91bF4x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7",
+            "googleToken" to null,
             "background" to false
         )
         val jsonStr = gson.toJson(payload)

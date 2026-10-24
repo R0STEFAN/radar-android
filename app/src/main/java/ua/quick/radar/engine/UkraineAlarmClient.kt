@@ -80,11 +80,8 @@ class UkraineAlarmClient {
 
         val parsed = try {
             val trimmed = responseBody.trim()
-            if (trimmed.startsWith("~3:") || (trimmed.startsWith("\"~3:") && trimmed.endsWith("\""))) {
-                CentrifugeMapDecoder.decode(trimmed)
-            } else {
-                gson.fromJson(responseBody, UaTargetsResponse::class.java)
-            }
+            CentrifugeMapDecoder.decode(trimmed)
+                ?: gson.fromJson(responseBody, UaTargetsResponse::class.java)
         } catch (e: Exception) {
             null
         } ?: return emptyList()
@@ -156,35 +153,53 @@ class UkraineAlarmClient {
                 val lowForm = formular.lowercase()
                 iconName = when {
                     "kab" in lowDtype || "каб" in lowForm -> "ic_airbomb"
+                    "banderol" in lowDtype || "бандероль" in lowForm -> "ic_banderol"
                     "jet" in lowDtype || "реакт" in lowForm -> "ic_shahed_jet"
                     "shahed" in lowDtype || "шахед" in lowForm || "дрон" in lowForm -> "ic_shahed"
                     "missile" in lowDtype || "ракета" in lowForm -> "ic_missile"
                     "ballistic" in lowDtype || "баліст" in lowForm -> "ic_ballistic"
-                    "drone" in lowDtype || "розвід" in lowForm -> "ic_drone"
+                    "drone" in lowDtype || "розвід" in lowForm || "lancet" in lowDtype || "zala" in lowDtype || "supercam" in lowDtype -> "ic_drone"
                     else -> "ic_air_threat_combined_white"
                 }
             }
 
             if (formular.isEmpty()) {
-                formular = when (iconName) {
-                    "ic_shahed" -> "Ударний БПЛА (Шахед)"
-                    "ic_shahed_jet" -> "Реактивний БПЛА"
-                    "ic_airbomb" -> "КАБ (УМПК)"
-                    "ic_missile" -> "Крилата ракета"
-                    "ic_ballistic" -> "Балістична ракета"
-                    "ic_drone" -> "Розвідувальний БПЛА"
+                formular = when {
+                    iconName == "ic_shahed" -> "Ударний БПЛА (Шахед)"
+                    "shahed_jet" in iconName -> "Реактивний БПЛА"
+                    iconName == "ic_banderol" -> "Швидкісний БПЛА «Бандероль»"
+                    iconName == "ic_airbomb" -> "КАБ (УМПК)"
+                    iconName == "ic_missile" -> "Крилата ракета"
+                    iconName == "ic_ballistic" -> "Балістична ракета"
+                    iconName == "ic_drone" -> "Розвідувальний БПЛА"
                     else -> if (dtype.isNotEmpty()) dtype else "Повітряна ціль"
                 }
             }
 
-            val echelon = when (iconName) {
-                "ic_airbomb" -> "Планування з висоти (6 000 – 10 000 м → піке)"
-                "ic_shahed" -> "Бриючий ешелон (80 – 350 м)"
-                "ic_shahed_jet" -> "Середній ешелон (1 500 – 3 500 м)"
-                "ic_missile" -> "Наднизький ешелон (40 – 120 м)"
-                "ic_ballistic" -> "Стратосфера (15+ км) → круте піке"
-                "ic_drone" -> "Тактичний оглядовий (1 000 – 2 500 м)"
+            val echelon = when {
+                iconName == "ic_airbomb" -> "Планування з висоти (6 000 – 10 000 м → піке)"
+                iconName == "ic_shahed" -> "Бриючий ешелон (80 – 350 м)"
+                "shahed_jet" in iconName || iconName == "ic_banderol" -> "Середній ешелон (1 500 – 3 500 м)"
+                iconName == "ic_missile" -> "Наднизький ешелон (40 – 120 м)"
+                iconName == "ic_ballistic" -> "Стратосфера (15+ км) → круте піке"
+                iconName == "ic_drone" -> "Тактичний оглядовий (1 000 – 2 500 м)"
                 else -> "Висотний ешелон"
+            }
+
+            // Якщо в цілі є вектор prediction і історія треку ще порожня — додаємо початкову точку
+            val pred = item.prediction
+            if (!trackHistories.containsKey(tid) && pred != null && (pred.fromX != 0.0 || pred.fromY != 0.0)) {
+                val pOx = pred.fromMarkerOffsetX ?: ox
+                val pOy = pred.fromMarkerOffsetY ?: oy
+                val (pLat, pLng) = normalizedToLngLat(pred.fromX + pOx, pred.fromY + pOy)
+                if (ThreatAnalyzer.haversineKm(pLat, pLng, lat, lng) >= 0.05) {
+                    val mDur = (item.movementDurationMs?.toDouble() ?: 20000.0) / 1000.0
+                    val fromTs = nowSec - maxOf(5.0, minOf(60.0, mDur))
+                    val hist = TrackHistory()
+                    hist.lastSeenSec = nowSec
+                    hist.history.add(TrackPoint(fromTs, pLat, pLng))
+                    trackHistories[tid] = hist
+                }
             }
 
             val track = trackHistories.getOrPut(tid) { TrackHistory() }
@@ -226,12 +241,22 @@ class UkraineAlarmClient {
                 }
             }
 
-            // Strictly suppress stationary targets:
-            // Target remains in trackHistories for 75 seconds, but is NOT added to result until movement is confirmed
-            val isMoving = history.size >= 2 &&
-                    (avgSpeedKmh ?: instantSpeedKmh ?: 0.0) >= 45.0 &&
-                    totalDist >= 0.25 &&
-                    courseDeg != null
+            // Якщо швидкість ще не обчислена по треку, але є офіційний курс — призначаємо типову крейсерську швидкість
+            if (avgSpeedKmh == null && courseDeg != null) {
+                avgSpeedKmh = when {
+                    iconName == "ic_airbomb" -> 480.0
+                    "shahed_jet" in iconName || iconName == "ic_banderol" -> 420.0
+                    "missile" in iconName -> 750.0
+                    "ballistic" in iconName -> 2200.0
+                    "drone" in iconName -> 115.0
+                    else -> 185.0
+                }
+            }
+
+            // Офіційні верифіковані цілі Мінцифри з відомим курсом (heading) відображаються одразу
+            val isMoving = courseDeg != null && (
+                item.heading != null || (history.size >= 2 && (avgSpeedKmh ?: instantSpeedKmh ?: 0.0) >= 45.0 && totalDist >= 0.25)
+            )
 
             if (!isMoving) {
                 continue
