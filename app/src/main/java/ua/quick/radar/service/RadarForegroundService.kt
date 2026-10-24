@@ -5,6 +5,7 @@ import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.media.AudioAttributes
 import android.media.MediaPlayer
@@ -111,8 +112,17 @@ class RadarForegroundService : Service() {
             return START_NOT_STICKY
         }
 
-        // Start ongoing foreground service notification
-        startForeground(NOTIF_SERVICE_ID, buildServiceNotification("Запуск моніторингу повітряного простору..."))
+        // Start ongoing foreground service notification (with explicit DATA_SYNC type on Android 10+)
+        try {
+            val notif = buildServiceNotification("Запуск моніторингу повітряного простору...")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIF_SERVICE_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(NOTIF_SERVICE_ID, notif)
+            }
+        } catch (e: Exception) {
+            // Prevent crash if background start restriction applies
+        }
 
         // Launch polling loop
         startMonitoringLoop()

@@ -151,11 +151,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun startRadarService() {
-        val serviceIntent = Intent(this, RadarForegroundService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
+        try {
+            val serviceIntent = Intent(this, RadarForegroundService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+        } catch (e: Exception) {
+            // Ignore if app is briefly in background during permission dialog
         }
     }
 
