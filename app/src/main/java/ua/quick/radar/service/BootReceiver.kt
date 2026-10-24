@@ -8,7 +8,7 @@ import android.os.Build
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
-        if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+        if (action == Intent.ACTION_BOOT_COMPLETED) {
             try {
                 val prefs = context.getSharedPreferences(RadarForegroundService.PREFS_NAME, Context.MODE_PRIVATE)
                 val isEnabled = prefs.getBoolean("service_enabled", true)
@@ -20,9 +20,8 @@ class BootReceiver : BroadcastReceiver() {
                         context.startService(serviceIntent)
                     }
                 }
-            } catch (e: Exception) {
-                // On Android 12+ (API 31+), starting a foreground service from background on MY_PACKAGE_REPLACED
-                // may throw ForegroundServiceStartNotAllowedException. Ignore safely so the app never crashes on update.
+            } catch (e: Throwable) {
+                // Safely ignore background service start restrictions on Android 12+
             }
         }
     }

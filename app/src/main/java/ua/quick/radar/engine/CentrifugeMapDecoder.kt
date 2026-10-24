@@ -2,7 +2,6 @@ package ua.quick.radar.engine
 
 import com.google.gson.JsonElement
 import com.google.gson.JsonParser
-import java.util.Base64
 
 object CentrifugeMapDecoder {
 
@@ -67,9 +66,7 @@ object CentrifugeMapDecoder {
      */
     private fun decodeV5(rawStr: String): UaTargetsResponse {
         val aStr = rawStr.substring(3)
-        val pad = (4 - aStr.length % 4) % 4
-        val b64 = aStr.replace('-', '+').replace('_', '/') + "=".repeat(pad)
-        val rawBytes = Base64.getDecoder().decode(b64)
+        val rawBytes = RadarApiClient.decodeBase64(aStr)
         if (rawBytes.size < 17) {
             throw IllegalArgumentException("Invalid ~5 map frame size: ${rawBytes.size}")
         }
@@ -317,9 +314,7 @@ object CentrifugeMapDecoder {
      */
     private fun decodeV3(payload: String): UaTargetsResponse? {
         val aStr = payload.substring(3)
-        val pad = (4 - aStr.length % 4) % 4
-        val b64 = aStr.replace('-', '+').replace('_', '/') + "=".repeat(pad)
-        val rawBytes = Base64.getDecoder().decode(b64)
+        val rawBytes = RadarApiClient.decodeBase64(aStr)
         if (rawBytes.size < 9) {
             throw IllegalArgumentException("Invalid map frame size: ${rawBytes.size}")
         }
@@ -544,10 +539,7 @@ object CentrifugeMapDecoder {
                 vTracks.add(tid.substring(1))
             } else if (tid.startsWith("~")) {
                 try {
-                    val aTid = tid.substring(1).replace('-', '+').replace('_', '/')
-                    val p = (4 - aTid.length % 4) % 4
-                    val b64Tid = aTid + "=".repeat(p)
-                    val buf = Base64.getDecoder().decode(b64Tid)
+                    val buf = RadarApiClient.decodeBase64(tid.substring(1))
                     val sb = StringBuilder()
                     for (idx in order) {
                         if (idx < buf.size) {

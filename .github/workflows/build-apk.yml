@@ -27,6 +27,9 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x ./gradlew
 
+      - name: Run Unit & Live Engine Tests
+        run: ./gradlew testReleaseUnitTest --info --stacktrace
+
       - name: Build Release APK
         run: ./gradlew assembleRelease --stacktrace
 
@@ -41,17 +44,19 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/heads/main')
         with:
-          tag_name: v1.4.7
-          name: Fluger Radar Android v1.4.7
+          tag_name: v1.4.8
+          name: Fluger Radar Android v1.4.8
           body: |
-            ### 📡 Fluger Radar Android APK v1.4.7
+            ### 📡 Fluger Radar Android APK v1.4.8
 
             #### 🎯 Головні оновлення:
-            - **🛠️ Виправлено падіння під час оновлення/запуску на Android 12–14 (`MY_PACKAGE_REPLACED` / `ForegroundService`):**
-              - Усунено системний збій `ForegroundServiceStartNotAllowedException` у `BootReceiver.kt`, який виникав на Android 12–14 одразу після встановлення оновлення поверх попередньої версії (коли Android надсилав фонову подію `MY_PACKAGE_REPLACED` до відкриття вікна програми).
-              - Додано явну передачу типу служби `ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC` у `startForeground(...)` для повної сумісності з вимогами Android 14 (SDK 34).
+            - **🛡️ Виправлено краш застосунку на старті (`v1.4.8`):**
+              - **Виправлено `SupervisorJob` / `supervisorScope` у `RadarForegroundService` та `RadarApiClient`:** усунено фатальну помилку Kotlin Coroutines, через яку будь-який збій мережі у дочірньому блоці `async { ... }` передавався напряму в `UncaughtExceptionHandler` і миттєво закривав процес Android на першій секунді запуску.
+              - **Захист `CopyOnWriteArrayList` для пулів сповіщень:** усунено `ConcurrentModificationException` під час одночасного сканування та скидання треків.
+              - **Автономний RFC 4648 Base64 кодек:** замінено `java.util.Base64` / `android.util.Base64` на власну швидку реалізацію без залежності від версії Android SDK.
+              - **Безпечний запуск `ForegroundService` та читання `SharedPreferences`:** додано захист від `ClassCastException`, `SecurityException` та подвійного старту під час запиту дозволів при першому відкритті.
+              - **Автоматичні JUnit-тести (`RadarEngineTest`):** додано набір автоматичних тестів декодера `~5:` ChaCha20, ротації `fcmToken`, живих запитів до `radar.quick.ua` / `map.ukrainealarm.com` та 4 рівнів загрози перед збіркою кожного APK.
             - **🔄 Динамічний пул та автоматична ротація `fcmToken` для «Флюгер» (`radar.quick.ua`):**
-              - Вирішено проблему блокування `HTTP 403 Forbidden` анти-бот системою `radar.quick.ua` під час багатоточкової тріангуляції (7–13 вузлів сітки).
               - Кожен вузол сітки отримує власний унікальний `fcmToken` із плановою ротацією кожні 20 хвилин та миттєвим самовідновленням при `HTTP 403`.
             - **📲 Вбудоване оновлення прямо з застосунку (GitHub Auto-Updater):**
               - У вкладці «Налаштування» додано картку **«Версія та оновлення»** з перевіркою релізів GitHub, індикатором завантаження APK та миттєвим встановленням поверх поточної версії.

@@ -1,12 +1,11 @@
 package ua.quick.radar.engine
 
-import android.util.Base64
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.supervisorScope
 import okhttp3.Dispatcher
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
@@ -64,6 +63,56 @@ class RadarApiClient {
     companion object {
         private const val FLUGER_TOKEN_TTL_SEC = 1200L // Scheduled token rotation every 20 minutes
         private const val FCM_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+
+        internal fun encodeBase64(bytes: ByteArray): String {
+            val table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+            val sb = StringBuilder(((bytes.size + 2) / 3) * 4)
+            var i = 0
+            while (i < bytes.size) {
+                val b0 = bytes[i].toInt() and 0xFF
+                val b1 = if (i + 1 < bytes.size) bytes[i + 1].toInt() and 0xFF else 0
+                val b2 = if (i + 2 < bytes.size) bytes[i + 2].toInt() and 0xFF else 0
+                val triple = (b0 shl 16) or (b1 shl 8) or b2
+                sb.append(table[(triple ushr 18) and 0x3F])
+                sb.append(table[(triple ushr 12) and 0x3F])
+                sb.append(if (i + 1 < bytes.size) table[(triple ushr 6) and 0x3F] else '=')
+                sb.append(if (i + 2 < bytes.size) table[triple and 0x3F] else '=')
+                i += 3
+            }
+            return sb.toString()
+        }
+
+        internal fun encodeBase64UrlNoPad(bytes: ByteArray): String {
+            return encodeBase64(bytes)
+                .replace('+', '-')
+                .replace('/', '_')
+                .trimEnd('=')
+        }
+
+        internal fun decodeBase64(input: String): ByteArray {
+            val clean = input.replace('-', '+').replace('_', '/').filter { it != '\n' && it != '\r' && it != ' ' && it != '=' }
+            val lookup = IntArray(128) { -1 }
+            val table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+            for (idx in table.indices) {
+                lookup[table[idx].code] = idx
+            }
+            val outLen = (clean.length * 3) / 4
+            val out = ByteArray(outLen)
+            var outIdx = 0
+            var i = 0
+            while (i < clean.length) {
+                val c0 = lookup.getOrElse(clean[i].code) { -1 }.coerceAtLeast(0)
+                val c1 = if (i + 1 < clean.length) lookup.getOrElse(clean[i + 1].code) { -1 }.coerceAtLeast(0) else 0
+                val c2 = if (i + 2 < clean.length) lookup.getOrElse(clean[i + 2].code) { -1 }.coerceAtLeast(0) else 0
+                val c3 = if (i + 3 < clean.length) lookup.getOrElse(clean[i + 3].code) { -1 }.coerceAtLeast(0) else 0
+                val triple = (c0 shl 18) or (c1 shl 12) or (c2 shl 6) or c3
+                if (outIdx < outLen) out[outIdx++] = ((triple ushr 16) and 0xFF).toByte()
+                if (outIdx < outLen) out[outIdx++] = ((triple ushr 8) and 0xFF).toByte()
+                if (outIdx < outLen) out[outIdx++] = (triple and 0xFF).toByte()
+                i += 4
+            }
+            return out
+        }
     }
 
     fun resetTracks() {
@@ -72,21 +121,21 @@ class RadarApiClient {
         nodeSalts.clear()
     }
 
-    private fun buildFcmToken(lat: Double, lng: Double, forceRotate: Boolean = false): String {
+    internal fun buildFcmToken(lat: Double, lng: Double, forceRotate: Boolean = false): String {
         val nodeKey = String.format(Locale.US, "%.3f:%.3f", lat, lng)
         val timeBucket = (System.currentTimeMillis() / 1000L) / FLUGER_TOKEN_TTL_SEC
 
         val nodeSalt = if (forceRotate) {
             val bytes = ByteArray(12)
             secureRandom.nextBytes(bytes)
-            val newSalt = Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            val newSalt = encodeBase64UrlNoPad(bytes)
             nodeSalts[nodeKey] = newSalt
             newSalt
         } else {
             nodeSalts.getOrPut(nodeKey) {
                 val bytes = ByteArray(12)
                 secureRandom.nextBytes(bytes)
-                Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+                encodeBase64UrlNoPad(bytes)
             }
         }
 
@@ -121,12 +170,12 @@ class RadarApiClient {
         return sb.toString()
     }
 
-    private fun generateHmacSha256(key: String, data: String): String {
+    internal fun generateHmacSha256(key: String, data: String): String {
         val sha256Hmac = Mac.getInstance("HmacSHA256")
         val secretKey = SecretKeySpec(key.toByteArray(StandardCharsets.UTF_8), "HmacSHA256")
         sha256Hmac.init(secretKey)
         val signedBytes = sha256Hmac.doFinal(data.toByteArray(StandardCharsets.UTF_8))
-        return Base64.encodeToString(signedBytes, Base64.NO_WRAP)
+        return encodeBase64(signedBytes)
     }
 
     fun fetchRawRadarData(lat: Double, lng: Double): JsonObject? {
@@ -140,7 +189,7 @@ class RadarApiClient {
                 "background" to false
             )
             val jsonStr = gson.toJson(payload)
-            val packageB64 = Base64.encodeToString(jsonStr.toByteArray(StandardCharsets.UTF_8), Base64.NO_WRAP)
+            val packageB64 = encodeBase64(jsonStr.toByteArray(StandardCharsets.UTF_8))
             val fibKey = generateFibonacciKey(packageB64)
             val signature = generateHmacSha256(fibKey, packageB64)
 
@@ -575,10 +624,14 @@ class RadarApiClient {
                 Pair(listOf(gridAll[0]), listOf(r0))
             } else {
                 val nodesToFetch = activeIndices.filter { it != 0 }.map { gridAll[it] }
-                val extraResults = coroutineScope {
+                val extraResults = supervisorScope {
                     nodesToFetch.map { node ->
                         async(Dispatchers.IO) {
-                            fetchRawRadarData(node.lat, node.lng)
+                            try {
+                                fetchRawRadarData(node.lat, node.lng)
+                            } catch (_: Throwable) {
+                                null
+                            }
                         }
                     }.awaitAll()
                 }
@@ -591,10 +644,14 @@ class RadarApiClient {
             val gridAll = getGrid80km(lat, lng)
             // Етап 1 (Дозорний контур): опитуємо Центр + 6 внутрішніх дозорних на 38 км (0..6)
             val sentryNodes = gridAll.subList(0, 7)
-            val sentryResults = coroutineScope {
+            val sentryResults = supervisorScope {
                 sentryNodes.map { node ->
                     async(Dispatchers.IO) {
-                        fetchRawRadarData(node.lat, node.lng)
+                        try {
+                            fetchRawRadarData(node.lat, node.lng)
+                        } catch (_: Throwable) {
+                            null
+                        }
                     }
                 }.awaitAll()
             }
@@ -625,10 +682,14 @@ class RadarApiClient {
             } else {
                 val wakeList = outerIndicesToWake.sorted()
                 val outerNodesToFetch = wakeList.map { gridAll[it] }
-                val outerResults = coroutineScope {
+                val outerResults = supervisorScope {
                     outerNodesToFetch.map { node ->
                         async(Dispatchers.IO) {
-                            fetchRawRadarData(node.lat, node.lng)
+                            try {
+                                fetchRawRadarData(node.lat, node.lng)
+                            } catch (_: Throwable) {
+                                null
+                            }
                         }
                     }.awaitAll()
                 }

@@ -74,7 +74,7 @@ class UkraineAlarmClient {
                 if (!response.isSuccessful) return emptyList()
                 response.body?.string() ?: return emptyList()
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             return emptyList()
         }
 
@@ -82,7 +82,7 @@ class UkraineAlarmClient {
             val trimmed = responseBody.trim()
             CentrifugeMapDecoder.decode(trimmed)
                 ?: gson.fromJson(responseBody, UaTargetsResponse::class.java)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             null
         } ?: return emptyList()
 

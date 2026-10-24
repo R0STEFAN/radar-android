@@ -18,6 +18,7 @@ import com.google.gson.Gson
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.CopyOnWriteArrayList
 import ua.quick.radar.MainActivity
 import ua.quick.radar.R
 import ua.quick.radar.engine.*
@@ -25,8 +26,11 @@ import kotlin.math.*
 
 class RadarForegroundService : Service() {
 
+    private val exceptionHandler = CoroutineExceptionHandler { _, _ ->
+        // Prevent any uncaught coroutine exception from crashing the process
+    }
     private val serviceJob = SupervisorJob()
-    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
+    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob + exceptionHandler)
 
     private lateinit var prefs: SharedPreferences
     private lateinit var notificationManager: NotificationManager
@@ -47,8 +51,8 @@ class RadarForegroundService : Service() {
 
     private var lastCriticalAlertTime = 0L
     private var lastSectorAlertTime = 0L
-    private val alertedSectorThreats = mutableListOf<TrackedAlertThreat>()
-    private val alertedCriticalThreats = mutableListOf<TrackedAlertThreat>()
+    private val alertedSectorThreats = CopyOnWriteArrayList<TrackedAlertThreat>()
+    private val alertedCriticalThreats = CopyOnWriteArrayList<TrackedAlertThreat>()
     private val uaToFlugerTrackMap = java.util.concurrent.ConcurrentHashMap<String, String>()
     private var monitoringJob: Job? = null
 
@@ -112,16 +116,22 @@ class RadarForegroundService : Service() {
             return START_NOT_STICKY
         }
 
-        // Start ongoing foreground service notification (with explicit DATA_SYNC type on Android 10+)
+        // Start ongoing foreground service notification (with explicit DATA_SYNC type on Android 14 / API 34+)
         try {
             val notif = buildServiceNotification("Запуск моніторингу повітряного простору...")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (Build.VERSION.SDK_INT >= 34) {
                 startForeground(NOTIF_SERVICE_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             } else {
                 startForeground(NOTIF_SERVICE_ID, notif)
             }
-        } catch (e: Exception) {
-            // Prevent crash if background start restriction applies
+        } catch (e: Throwable) {
+            try {
+                val notif = buildServiceNotification("Запуск моніторингу повітряного простору...")
+                startForeground(NOTIF_SERVICE_ID, notif)
+            } catch (_: Throwable) {
+                stopSelf()
+                return START_NOT_STICKY
+            }
         }
 
         // Launch polling loop
@@ -164,26 +174,47 @@ class RadarForegroundService : Service() {
     }
 
     fun loadSettings(): AppSettings {
+        fun safeFloat(key: String, def: Float): Double = try {
+            prefs.getFloat(key, def).toDouble()
+        } catch (_: Throwable) {
+            def.toDouble()
+        }
+        fun safeInt(key: String, def: Int): Int = try {
+            prefs.getInt(key, def)
+        } catch (_: Throwable) {
+            def
+        }
+        fun safeBool(key: String, def: Boolean): Boolean = try {
+            prefs.getBoolean(key, def)
+        } catch (_: Throwable) {
+            def
+        }
+        fun safeStr(key: String, def: String): String = try {
+            prefs.getString(key, def) ?: def
+        } catch (_: Throwable) {
+            def
+        }
+
         return AppSettings(
-            pinnedLat = prefs.getFloat("pinned_lat", 50.4501f).toDouble(),
-            pinnedLng = prefs.getFloat("pinned_lng", 30.5234f).toDouble(),
-            pinnedName = prefs.getString("pinned_name", "Київ") ?: "Київ",
-            criticalEnabled = prefs.getBoolean("critical_enabled", true),
-            criticalRadiusKm = prefs.getFloat("critical_radius_km", 40.0f).toDouble(),
-            criticalSoundUri = prefs.getString("critical_sound_uri", "") ?: "",
-            criticalVolume = prefs.getInt("critical_volume", 80),
-            sectorEnabled = prefs.getBoolean("sector_enabled", true),
+            pinnedLat = safeFloat("pinned_lat", 50.4501f),
+            pinnedLng = safeFloat("pinned_lng", 30.5234f),
+            pinnedName = safeStr("pinned_name", "Київ"),
+            criticalEnabled = safeBool("critical_enabled", true),
+            criticalRadiusKm = safeFloat("critical_radius_km", 40.0f),
+            criticalSoundUri = safeStr("critical_sound_uri", ""),
+            criticalVolume = safeInt("critical_volume", 80),
+            sectorEnabled = safeBool("sector_enabled", true),
             sectorRadiusKm = run {
-                val r = prefs.getFloat("sector_radius_km", 45.0f).toDouble()
+                val r = safeFloat("sector_radius_km", 45.0f)
                 if (r != 45.0 && r != 80.0) 45.0 else r
             },
-            sectorSoundUri = prefs.getString("sector_sound_uri", "") ?: "",
-            sectorVolume = prefs.getInt("sector_volume", 60),
-            enableFluger = prefs.getBoolean("enable_fluger", true),
-            enableUaAlarm = prefs.getBoolean("enable_ua_alarm", true),
-            uaAllUkraine = prefs.getBoolean("ua_all_ukraine", false),
-            hideScoutDrones = prefs.getBoolean("hide_scout_drones", false),
-            serviceEnabled = prefs.getBoolean("service_enabled", true)
+            sectorSoundUri = safeStr("sector_sound_uri", ""),
+            sectorVolume = safeInt("sector_volume", 60),
+            enableFluger = safeBool("enable_fluger", true),
+            enableUaAlarm = safeBool("enable_ua_alarm", true),
+            uaAllUkraine = safeBool("ua_all_ukraine", false),
+            hideScoutDrones = safeBool("hide_scout_drones", false),
+            serviceEnabled = safeBool("service_enabled", true)
         )
     }
 
@@ -302,20 +333,28 @@ class RadarForegroundService : Service() {
                         continue
                     }
 
-                    // Direct fetching according to active sensors (Fluger & UkraineAlarm)
-                    val flugerTargetsDef = async {
-                        if (settings.enableFluger) {
-                            radarClient.fetchFlugerTriangulatedTargets(settings.pinnedLat, settings.pinnedLng, settings.sectorRadiusKm)
-                        } else emptyList()
+                    // Direct fetching according to active sensors (Fluger & UkraineAlarm) inside supervisorScope
+                    val (flugerTargets, uaTargets) = supervisorScope {
+                        val flugerTargetsDef = async {
+                            try {
+                                if (settings.enableFluger) {
+                                    radarClient.fetchFlugerTriangulatedTargets(settings.pinnedLat, settings.pinnedLng, settings.sectorRadiusKm)
+                                } else emptyList()
+                            } catch (e: Throwable) {
+                                emptyList()
+                            }
+                        }
+                        val uaTargetsDef = async {
+                            try {
+                                if (settings.enableUaAlarm) {
+                                    uaAlarmClient.fetchUaRadarTargets()
+                                } else emptyList()
+                            } catch (e: Throwable) {
+                                emptyList()
+                            }
+                        }
+                        Pair(flugerTargetsDef.await(), uaTargetsDef.await())
                     }
-                    val uaTargetsDef = async {
-                        if (settings.enableUaAlarm) {
-                            uaAlarmClient.fetchUaRadarTargets()
-                        } else emptyList()
-                    }
-
-                    val flugerTargets = flugerTargetsDef.await()
-                    val uaTargets = uaTargetsDef.await()
 
                     // Cross-sensor fusion
                     var fusedTargets = fuseTargets(flugerTargets, uaTargets, settings)
@@ -340,8 +379,8 @@ class RadarForegroundService : Service() {
                     // Evaluate and fire alarm notifications
                     handleAlerts(assessment, settings)
 
-                } catch (e: Exception) {
-                    // Ignore transient network hiccups and retry
+                } catch (e: Throwable) {
+                    // Ignore transient network or runtime hiccups and retry
                 }
 
                 // Drain any pending trigger signals accumulated during the active network scan

@@ -90,8 +90,10 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webView)
         setupWebView()
 
-        checkAndRequestPermissions()
-        startRadarService()
+        val needed = checkAndRequestPermissions()
+        if (!needed) {
+            startRadarService()
+        }
         observeRadarFlow()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -135,7 +137,7 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("file:///android_asset/www/index.html")
     }
 
-    private fun checkAndRequestPermissions() {
+    private fun checkAndRequestPermissions(): Boolean {
         val needed = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -147,7 +149,9 @@ class MainActivity : AppCompatActivity() {
         }
         if (needed.isNotEmpty()) {
             permissionLauncher.launch(needed.toTypedArray())
+            return true
         }
+        return false
     }
 
     fun startRadarService() {
@@ -158,7 +162,7 @@ class MainActivity : AppCompatActivity() {
             } else {
                 startService(serviceIntent)
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             // Ignore if app is briefly in background during permission dialog
         }
     }

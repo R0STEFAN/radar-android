@@ -36,26 +36,47 @@ class WebAppInterface(private val activity: MainActivity) {
 
     @JavascriptInterface
     fun getSettings(): String {
+        fun safeFloat(key: String, def: Float): Double = try {
+            prefs.getFloat(key, def).toDouble()
+        } catch (_: Throwable) {
+            def.toDouble()
+        }
+        fun safeInt(key: String, def: Int): Int = try {
+            prefs.getInt(key, def)
+        } catch (_: Throwable) {
+            def
+        }
+        fun safeBool(key: String, def: Boolean): Boolean = try {
+            prefs.getBoolean(key, def)
+        } catch (_: Throwable) {
+            def
+        }
+        fun safeStr(key: String, def: String): String = try {
+            prefs.getString(key, def) ?: def
+        } catch (_: Throwable) {
+            def
+        }
+
         val settings = AppSettings(
-            pinnedLat = prefs.getFloat("pinned_lat", 50.4501f).toDouble(),
-            pinnedLng = prefs.getFloat("pinned_lng", 30.5234f).toDouble(),
-            pinnedName = prefs.getString("pinned_name", "Київ") ?: "Київ",
-            criticalEnabled = prefs.getBoolean("critical_enabled", true),
-            criticalRadiusKm = prefs.getFloat("critical_radius_km", 40.0f).toDouble(),
-            criticalSoundUri = prefs.getString("critical_sound_uri", "") ?: "",
-            criticalVolume = prefs.getInt("critical_volume", 80),
-            sectorEnabled = prefs.getBoolean("sector_enabled", true),
+            pinnedLat = safeFloat("pinned_lat", 50.4501f),
+            pinnedLng = safeFloat("pinned_lng", 30.5234f),
+            pinnedName = safeStr("pinned_name", "Київ"),
+            criticalEnabled = safeBool("critical_enabled", true),
+            criticalRadiusKm = safeFloat("critical_radius_km", 40.0f),
+            criticalSoundUri = safeStr("critical_sound_uri", ""),
+            criticalVolume = safeInt("critical_volume", 80),
+            sectorEnabled = safeBool("sector_enabled", true),
             sectorRadiusKm = run {
-                val r = prefs.getFloat("sector_radius_km", 45.0f).toDouble()
+                val r = safeFloat("sector_radius_km", 45.0f)
                 if (r != 45.0 && r != 80.0) 45.0 else r
             },
-            sectorSoundUri = prefs.getString("sector_sound_uri", "") ?: "",
-            sectorVolume = prefs.getInt("sector_volume", 60),
-            enableFluger = prefs.getBoolean("enable_fluger", true),
-            enableUaAlarm = prefs.getBoolean("enable_ua_alarm", true),
-            uaAllUkraine = prefs.getBoolean("ua_all_ukraine", false),
-            hideScoutDrones = prefs.getBoolean("hide_scout_drones", false),
-            serviceEnabled = prefs.getBoolean("service_enabled", true)
+            sectorSoundUri = safeStr("sector_sound_uri", ""),
+            sectorVolume = safeInt("sector_volume", 60),
+            enableFluger = safeBool("enable_fluger", true),
+            enableUaAlarm = safeBool("enable_ua_alarm", true),
+            uaAllUkraine = safeBool("ua_all_ukraine", false),
+            hideScoutDrones = safeBool("hide_scout_drones", false),
+            serviceEnabled = safeBool("service_enabled", true)
         )
         return gson.toJson(settings)
     }
@@ -239,9 +260,9 @@ class WebAppInterface(private val activity: MainActivity) {
     fun getAppVersion(): String {
         return try {
             val pInfo = activity.packageManager.getPackageInfo(activity.packageName, 0)
-            pInfo.versionName ?: "1.4.7"
-        } catch (e: Exception) {
-            "1.4.7"
+            pInfo.versionName ?: "1.4.8"
+        } catch (e: Throwable) {
+            "1.4.8"
         }
     }
 
