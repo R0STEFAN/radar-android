@@ -12,6 +12,9 @@ import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import javax.crypto.Mac
@@ -54,9 +57,54 @@ class RadarApiClient {
     private val activeTracks = ConcurrentHashMap<Int, InternalTrack>()
     private var nextTrackId = 1
 
+    // Dynamic per-node FCM token pool & automatic rotation (prevents HTTP 403 anti-bot blacklisting on radar.quick.ua)
+    private val nodeSalts = ConcurrentHashMap<String, String>()
+    private val secureRandom = SecureRandom()
+
+    companion object {
+        private const val FLUGER_TOKEN_TTL_SEC = 1200L // Scheduled token rotation every 20 minutes
+        private const val FCM_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+    }
+
     fun resetTracks() {
         activeTracks.clear()
         nextTrackId = 1
+        nodeSalts.clear()
+    }
+
+    private fun buildFcmToken(lat: Double, lng: Double, forceRotate: Boolean = false): String {
+        val nodeKey = String.format(Locale.US, "%.3f:%.3f", lat, lng)
+        val timeBucket = (System.currentTimeMillis() / 1000L) / FLUGER_TOKEN_TTL_SEC
+
+        val nodeSalt = if (forceRotate) {
+            val bytes = ByteArray(12)
+            secureRandom.nextBytes(bytes)
+            val newSalt = Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            nodeSalts[nodeKey] = newSalt
+            newSalt
+        } else {
+            nodeSalts.getOrPut(nodeKey) {
+                val bytes = ByteArray(12)
+                secureRandom.nextBytes(bytes)
+                Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            }
+        }
+
+        val seedMaterial = "fluger_fcm:$nodeKey:$timeBucket:$nodeSalt".toByteArray(StandardCharsets.UTF_8)
+        val sha512 = MessageDigest.getInstance("SHA-512")
+        val d1 = sha512.digest(seedMaterial)
+        val d2 = MessageDigest.getInstance("SHA-512").digest(seedMaterial + ":ext".toByteArray(StandardCharsets.UTF_8))
+        val digest = d1 + d2
+
+        val sb = StringBuilder(143)
+        for (i in 0 until 22) {
+            sb.append(FCM_ALPHABET[digest[i].toInt() and 63])
+        }
+        sb.append(":APA91b")
+        for (i in 22 until 136) {
+            sb.append(FCM_ALPHABET[digest[i].toInt() and 63])
+        }
+        return sb.toString()
     }
 
     fun generateFibonacciKey(source: String): String {
@@ -82,39 +130,59 @@ class RadarApiClient {
     }
 
     fun fetchRawRadarData(lat: Double, lng: Double): JsonObject? {
-        val payload = mapOf(
-            "lat" to lat,
-            "lng" to lng,
-            "fcmToken" to "dK9_x8LmR2qP5vN1wZ3bC7:APA91bF4x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7",
-            "googleToken" to null,
-            "background" to false
-        )
-        val jsonStr = gson.toJson(payload)
-        val packageB64 = Base64.encodeToString(jsonStr.toByteArray(StandardCharsets.UTF_8), Base64.NO_WRAP)
-        val fibKey = generateFibonacciKey(packageB64)
-        val signature = generateHmacSha256(fibKey, packageB64)
+        for (attempt in 0..1) {
+            val fcmToken = buildFcmToken(lat, lng, forceRotate = (attempt > 0))
+            val payload = mapOf(
+                "lat" to lat,
+                "lng" to lng,
+                "fcmToken" to fcmToken,
+                "googleToken" to "",
+                "background" to false
+            )
+            val jsonStr = gson.toJson(payload)
+            val packageB64 = Base64.encodeToString(jsonStr.toByteArray(StandardCharsets.UTF_8), Base64.NO_WRAP)
+            val fibKey = generateFibonacciKey(packageB64)
+            val signature = generateHmacSha256(fibKey, packageB64)
 
-        val formBody = FormBody.Builder()
-            .add("package", packageB64)
-            .add("signature", signature)
-            .build()
+            val formBody = FormBody.Builder()
+                .add("package", packageB64)
+                .add("signature", signature)
+                .build()
 
-        val request = Request.Builder()
-            .url("https://radar.quick.ua/api-2026-09-01/information.php")
-            .header("User-Agent", "okhttp/4.12.0")
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .post(formBody)
-            .build()
+            val request = Request.Builder()
+                .url("https://radar.quick.ua/api-2026-09-01/information.php")
+                .header("User-Agent", "okhttp/4.12.0")
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .post(formBody)
+                .build()
 
-        return try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
-                val bodyStr = response.body?.string() ?: return null
-                gson.fromJson(bodyStr, JsonObject::class.java)
+            try {
+                val result = client.newCall(request).execute().use { response ->
+                    if (response.code == 403 && attempt == 0) {
+                        return@use null // Trigger immediate retry with rotated FCM token
+                    }
+                    if (!response.isSuccessful) {
+                        return null
+                    }
+                    val bodyStr = response.body?.string()
+                    if (bodyStr.isNullOrBlank()) {
+                        if (attempt == 0) return@use null
+                        return null
+                    }
+                    try {
+                        gson.fromJson(bodyStr, JsonObject::class.java)
+                    } catch (e: Exception) {
+                        if (attempt == 0) null else return null
+                    }
+                }
+                if (result != null) {
+                    return result
+                }
+            } catch (e: Exception) {
+                if (attempt > 0) return null
             }
-        } catch (e: Exception) {
-            null
         }
+        return null
     }
 
     private fun intersectRays(

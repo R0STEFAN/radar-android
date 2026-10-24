@@ -239,9 +239,9 @@ class WebAppInterface(private val activity: MainActivity) {
     fun getAppVersion(): String {
         return try {
             val pInfo = activity.packageManager.getPackageInfo(activity.packageName, 0)
-            pInfo.versionName ?: "1.4.4"
+            pInfo.versionName ?: "1.4.6"
         } catch (e: Exception) {
-            "1.4.4"
+            "1.4.6"
         }
     }
 

@@ -71,8 +71,8 @@ data class AppSettings(
 data class RadarPayload(
     val lat: Double,
     val lng: Double,
-    val fcmToken: String = "dK9_x8LmR2qP5vN1wZ3bC7:APA91bF4x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7dK9_x8LmR2qP5vN1wZ3bC7",
-    val googleToken: String? = null,
+    val fcmToken: String,
+    val googleToken: String = "",
     val background: Boolean = false
 )
 
